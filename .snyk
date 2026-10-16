@@ -1,0 +1,17 @@
+# Snyk policy
+version: v1.25.0
+ignore:
+  # Both come from react-native@0.81.5, a devDependency used only for TypeScript types (never installed
+  # by users of the plugin). No patched release exists for either package.
+  SNYK-JS-BRACES-19963945:
+    - '*':
+        reason: Dev-only transitive dependency of react-native (types); braces has no fixed release yet.
+        expires: 2027-01-16T00:00:00.000Z
+  SNYK-JS-INFLIGHT-6095116:
+    - '*':
+        reason: Dev-only transitive dependency of react-native (types); inflight is unmaintained and has no fixed release.
+        expires: 2027-01-16T00:00:00.000Z
+exclude:
+  code:
+    # Deliberately fake credentials used as redaction fixtures.
+    - test/**

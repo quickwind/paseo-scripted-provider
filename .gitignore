@@ -1,0 +1,9 @@
+scratch/
+node_modules/
+dist/
+coverage/
+reports/
+.DS_Store
+*.log
+.e2e-tmp/
+.superpowers/
