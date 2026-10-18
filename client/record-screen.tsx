@@ -19,6 +19,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layout, navigation }) => {
   const agentId = params.agentId ?? "";
+  const workspaceId = params.workspaceId ?? "";
   const { colors } = theme;
   const capture = useRpc(captureRpc);
   const paseo = usePaseo();
@@ -157,7 +158,11 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     if (!merged.ok) return toast.error(`Existing script is invalid: ${merged.error}`);
     if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error("Could not save the script");
     try {
-      const created = await paseo.agents.create({ cwd: cwd ?? ".", config: { provider: `scripted/${merged.name}` }, title: `Replay: ${merged.name}` });
+      const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: `Replay: ${merged.name}` };
+      // Create inside the recorded conversation's workspace; a bare cwd would make the host open a new workspace.
+      const created = workspaceId
+        ? await paseo.workspaces.ref(workspaceId).agents.create(agentOptions)
+        : await paseo.agents.create({ cwd: cwd ?? ".", ...agentOptions });
       toast.show(`Replay agent created (${merged.name}). Send the same messages and it answers by content.`);
       navigation?.openAgent({ agentId: created.id });
     } catch (e) {

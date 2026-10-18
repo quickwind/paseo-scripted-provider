@@ -19,7 +19,7 @@ export function contributeRecordButtons(client: PluginClientContext) {
         label: "Record as script",
         behavior: {
           kind: "action",
-          onPress: () => client.openScreen({ screenId: "scripted-record", params: { agentId: agent.id } }),
+          onPress: () => client.openScreen({ screenId: "scripted-record", params: { agentId: agent.id, workspaceId: agent.workspaceId } }),
         },
       },
     }),
