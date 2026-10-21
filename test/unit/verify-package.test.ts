@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkFileList } from "../../scripts/verify-package.mjs";
+import { checkFileList, packFileListFrom } from "../../scripts/verify-package.mjs";
 
 const manifest = {
   name: "paseo-scripted-provider",
@@ -14,6 +14,21 @@ const base = {
   name: "paseo-scripted-provider",
   expectedVersion: "0.1.1",
 };
+
+describe("packFileListFrom", () => {
+  it("reads the npm 11 shape (an array of results)", () => {
+    const parsed = [{ files: [{ path: "a.js" }, { path: "b.js" }] }];
+    expect(packFileListFrom(parsed)).toEqual(["a.js", "b.js"]);
+  });
+  it("reads the npm 12 shape (an object keyed by package name)", () => {
+    const parsed = { "my-package": { files: [{ path: "a.js" }] } };
+    expect(packFileListFrom(parsed)).toEqual(["a.js"]);
+  });
+  it("returns nothing for an unexpected shape", () => {
+    expect(packFileListFrom({})).toEqual([]);
+    expect(packFileListFrom(undefined)).toEqual([]);
+  });
+});
 
 describe("checkFileList", () => {
   it("accepts a tarball with every required file", () => {

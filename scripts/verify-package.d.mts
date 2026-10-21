@@ -1,3 +1,5 @@
+export function packFileListFrom(parsed: unknown): string[];
+
 export function checkFileList(input: {
   files: string[];
   required: string[];

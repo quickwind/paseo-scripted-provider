@@ -34,11 +34,18 @@ const REQUIRED_TESTKIT_FILES = ["package.json", "README.md", "index.mjs", "daemo
 /** Directories that must never end up in a published tarball. */
 const FORBIDDEN_PREFIXES = ["test/", "e2e/", "scripts/", "reports/", "node_modules/", ".github/", "scenarios/", "scratch/"];
 
+/**
+ * The file list of a `npm pack --dry-run --json` result.
+ * npm 11 returns an array of results, npm 12 an object keyed by package name.
+ */
+export function packFileListFrom(parsed) {
+  const entry = Array.isArray(parsed) ? parsed[0] : parsed?.files ? parsed : Object.values(parsed ?? {})[0];
+  return (entry?.files ?? []).map((f) => f.path);
+}
+
 export function packFileList(pkgDir) {
   const raw = execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: pkgDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const parsed = JSON.parse(raw);
-  const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-  return (entry?.files ?? []).map((f) => f.path);
+  return packFileListFrom(JSON.parse(raw));
 }
 
 export function checkFileList({ files, required, manifest, name, expectedVersion, forbidRuntimeDependencies = false }) {
