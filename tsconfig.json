@@ -22,7 +22,6 @@
     "**/*.tsx"
   ],
   "exclude": [
-    ".superpowers",
     "e2e",
     "node_modules",
     "reports",

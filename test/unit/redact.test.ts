@@ -141,7 +141,7 @@ describe("fewer false alarms (user report: 44 suspicious items)", () => {
     const r = new Redactor();
     for (const text of [
       "see 2026-10-16-paseo-scripted-provider-design.md for details",
-      "docs/superpowers/plans/2026-10-16-paseo-scripted-provider.md",
+      "docs/specs/2026-10-16-scripted-provider.md",
       "toolu_01RJBzgi9ujTiqR629ZYKSNz was the call",
       "run test-driven-development-with-mocks-v2 now",
       "created at 2026-10-16T09:37:12.345Z by someone",

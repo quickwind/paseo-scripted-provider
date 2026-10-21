@@ -8,6 +8,9 @@
     "type": "git",
     "url": "git+https://github.com/quickwind/paseo-scripted-provider.git"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "files": [
     "README.md",

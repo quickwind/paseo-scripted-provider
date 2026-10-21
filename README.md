@@ -3,7 +3,7 @@
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Fcoverage.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
 [![Snyk](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Fsnyk.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml)
 [![license: MIT](https://img.shields.io/github/license/quickwind/paseo-scripted-provider)](LICENSE)
-[![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0%20%3C0.12-blue)](#compatibility)
+[![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0%20%3C0.13-blue)](#compatibility)
 
 # paseo-scripted-provider
 
@@ -17,9 +17,15 @@ Use it to
 
 ## Install
 
-Requires Paseo `>=0.11.0 <0.12.0` and plugins enabled in the daemon config (`"pluginsEnabled": true` at the top level of `config.json`; without it `paseo plugin install` leaves the plugin disabled).
+Requires Paseo `>=0.11.0 <0.13.0` (tested on 0.11.x and 0.12.x) and plugins enabled in the daemon config (`"pluginsEnabled": true` at the top level of `config.json`; without it `paseo plugin install` leaves the plugin disabled).
+
+Install the plugin via the Paseo CLI:
 
 ```bash
+# Install published plugin
+paseo plugin install paseo-scripted-provider
+
+# Or install from source
 git clone https://github.com/quickwind/paseo-scripted-provider
 paseo plugin install ./paseo-scripted-provider
 ```
@@ -38,36 +44,59 @@ Slash commands (conveniences over normal messages): `/scripted-next` sends `(nex
 
 ## Script format
 
-YAML or JSON (the format is detected from the text). Scenarios are lists of replies; the agent answers each incoming message with the next reply. YAML is nicer for hand-written scripts: comments, and multi-line replies as `|` blocks instead of `\n` escapes.
+Scripts can be written in **YAML** or **JSON** (auto-detected). Scenarios are lists of sequential replies; each message sent to the agent advances to the next scripted reply. YAML is recommended for readability, multi-line strings (`|`), and comments.
 
 ```yaml
-# the same script in YAML
 macros:
-  BAD_FORM: |
-    ```form
-    {...}
-    ```
+  SUMMARY_HEADER: |
+    ### Diagnostics & Health Check
+    Scanning project structure...
 scenarios:
-  bad-then-good:
-    - text: "@BAD_FORM"
-    - text: Fixed.
+  # Scenario 1: Multi-turn flow with simulated tool execution
+  diagnostics:
+    - text: "@SUMMARY_HEADER"
+    - tools:
+        - name: Bash
+          detail: { type: shell, command: "npm test", exitCode: 0, output: "3 passed" }
+          runningMs: 400
+          status: completed
+        - name: Edit
+          detail: { type: edit, filePath: "src/a.ts" }
+          status: failed
+          error: conflict
+      text: "Tests pass; the edit conflicted."
+
+  # Scenario 2: Simulated streaming chunks
+  stream-demo:
+    - chunks: ["Analyzing repo... ", "Found 3 files. ", "All clean!"]
+      chunkDelayMs: 250
+
+  # Scenario 3: Reproducing a failure or timeout
+  timeout-demo:
+    - text: "Connecting to remote registry..."
+      startDelayMs: 1500
+      outcome: failed
+      error: "Connection timed out"
 ```
 
 The same in JSON:
 
 ```jsonc
 {
-  "macros": { "BAD_FORM": "```form\n{...}\n```" },
+  "macros": {
+    "HEADER": "### Diagnostics\nRunning health check..."
+  },
   "scenarios": {
-    "bad-then-good": [{ "text": "@BAD_FORM" }, { "text": "Fixed." }],
-    "slow-fail": [{ "text": "partial...", "startDelayMs": 1500, "outcome": "failed", "error": "boom" }],
-    "tools": [{
-      "tools": [
-        { "name": "Bash", "detail": { "type": "shell", "command": "npm test", "output": "3 passed", "exitCode": 0 }, "runningMs": 800 },
-        { "name": "Edit", "detail": { "type": "edit", "filePath": "src/a.ts" }, "status": "failed", "error": "conflict" }
-      ],
-      "text": "Tests pass; the edit conflicted."
-    }]
+    "diagnostics": [
+      { "text": "@HEADER" },
+      {
+        "tools": [
+          { "name": "Bash", "detail": { "type": "shell", "command": "npm test", "output": "3 passed", "exitCode": 0 }, "runningMs": 400, "status": "completed" },
+          { "name": "Edit", "detail": { "type": "edit", "filePath": "src/a.ts" }, "status": "failed", "error": "conflict" }
+        ],
+        "text": "Tests pass; the edit conflicted."
+      }
+    ]
   }
 }
 ```
@@ -108,6 +137,15 @@ Every conversation gets a **Record as script** button (clapperboard icon) next t
    - high-entropy strings no rule recognized are *listed, never changed*: you must confirm each (**Redact** or **Keep**) before export is enabled.
 3. Choose **YAML** (default) or **JSON**, then **Download** (web/desktop) or **Copy to clipboard** (mobile), or **Replay now** to save the scenario into your settings and open a Scripted agent running it.
 
+Example of an exported recording from a real agent session (secrets and paths automatically neutralized):
+
+```yaml
+scenarios:
+  reproduced-session:
+    - expect: "Please deploy the service to {{cwd}} with API key {{secret_1}} and notify {{email_1}}"
+      text: "Service deployed to {{cwd}}. Alert sent to {{email_1}}."
+```
+
 > **Redaction is best effort.** It cannot find names, customer data or business secrets. Read every step before you share or commit the file. The plugin uploads nothing.
 
 The file and the inline script in settings are merged (inline wins), so *Replay now* never hides your script file.
@@ -116,12 +154,18 @@ Known limitation: inside a recorded turn, tool calls are replayed before the mes
 
 ## Testkit
 
-`testkit/` is a small Node-only (no shell, Windows-safe) helper to start an isolated daemon, install this plugin and drive agents. See [`e2e/scripted.e2e.test.mjs`](e2e/scripted.e2e.test.mjs) for a complete example.
+[`testkit/`](testkit/) is a Node-only (no shell, Windows-safe) helper package (`paseo-scripted-provider-testkit`) to start an isolated daemon, install this plugin and drive agents in CI or unit tests. See [`e2e/scripted.e2e.test.mjs`](e2e/scripted.e2e.test.mjs) for a complete example.
 
-The testkit is used from a clone of this repository (it is not published to npm yet): `npm ci --prefix testkit`, then import it by relative path.
+```bash
+npm install -D paseo-scripted-provider-testkit
+```
+
+Or from a local clone of this repository: `npm ci --prefix testkit`, then import it relatively.
 
 ```js
-import { startScriptedEnv } from "./testkit/index.mjs";
+import { startScriptedEnv } from "paseo-scripted-provider-testkit";
+// or from local source: import { startScriptedEnv } from "./testkit/index.mjs";
+
 const env = await startScriptedEnv({ script: { scenarios: { hi: [{ text: "hello" }] } } });
 const agent = await env.createAgent({ scenario: "hi", prompt: "x" });
 await env.waitForFinish(agent.id);
@@ -135,7 +179,7 @@ It picks a free port, uses a temp `--home` plus fake `HOME`/`USERPROFILE`, disab
 
 | Paseo | Status |
 |---|---|
-| 0.11.x (tested on 0.11.4) | supported |
+| 0.11.x, 0.12.x (tested on 0.11.4 and 0.12.0) | supported |
 | other | not tested |
 
 The provider protocol is an internal Paseo interface and may change between versions. CI runs the real-daemon e2e on Ubuntu, macOS and Windows against the pinned Paseo version.
@@ -155,7 +199,7 @@ npm run verify:real      # local only: real opencode / devin sessions → record
 
 ## Roadmap
 
-Permission-approval flows, real MCP calls from scripts, template variables, prompt-matching rules, persisted custom redaction rules, a published testkit package.
+Permission-approval flows, real MCP calls from scripts, template variables, prompt-matching rules, persisted custom redaction rules.
 
 ## Third-party code
 
