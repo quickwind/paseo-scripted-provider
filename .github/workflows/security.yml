@@ -48,7 +48,7 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' && github.event_name != 'pull_request' }}
         continue-on-error: true
         run: snyk monitor --file=package.json --dev
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: snyk
