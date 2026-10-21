@@ -23,7 +23,7 @@ export interface StepView {
   suspicious: string[];
 }
 
-export type EditField = "text" | "expect" | "reasoning" | `messages.${number}`;
+export type EditField = "text" | "expect" | "reasoning" | `messages.${number}` | `steps.${number}.text`;
 
 export function buildReview(entries: readonly TimelineEntry[], options: ConvertOptions, ctx: { cwd?: string | null }): ReviewModel {
   return {
@@ -52,6 +52,15 @@ function stringsOf(r: Reply): Str[] {
   for (const t of r.tools ?? []) out.push({ label: `Tool: ${t.name}`, text: JSON.stringify(t) });
   if (r.text !== undefined) out.push({ label: "Agent said", field: "text", text: r.text });
   (r.messages ?? []).forEach((t, i) => out.push({ label: `Agent message ${i + 1}`, field: `messages.${i}`, text: t }));
+  // A recorded reply keeps its content in timed steps; show every string they carry.
+  (r.steps ?? []).forEach((s, i) => {
+    if (s.kind === "tool") {
+      const name = s.tool?.name ?? "tool";
+      out.push({ label: `Tool: ${name}`, text: JSON.stringify(s.tool) });
+    } else {
+      out.push({ label: s.kind === "reasoning" ? "Reasoning" : "Agent said", field: `steps.${i}.text`, text: s.text ?? "" });
+    }
+  });
   if (r.error !== undefined) out.push({ label: "Error", text: r.error });
   return out;
 }
@@ -96,6 +105,9 @@ export function editStep(m: ReviewModel, index: number, field: EditField, value:
     if (field.startsWith("messages.")) {
       const k = Number(field.slice("messages.".length));
       next.messages = (r.messages ?? []).map((t, j) => (j === k ? value : t));
+    } else if (field.startsWith("steps.")) {
+      const k = Number(field.slice("steps.".length).split(".")[0]);
+      next.steps = (r.steps ?? []).map((s, j) => (j === k ? { ...s, text: value } : s));
     } else {
       (next as Record<string, unknown>)[field] = value;
     }

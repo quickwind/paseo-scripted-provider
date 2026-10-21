@@ -62,6 +62,24 @@ export const ToolSpecSchema = z.object({
   error: z.string().optional(),
 });
 
+/**
+ * One timed step of a reply, in the order the original agent produced it.
+ *
+ * A recorded conversation keeps its real pacing here: `delayMs` is the gap to the previous event,
+ * so thinking time, every tool call and every message keep their own duration and a replay takes
+ * as long as the original turn did. Hand-written scripts normally use `text`/`messages`/`tools`
+ * instead and ignore this.
+ */
+export const StepSchema = z.object({
+  kind: z.enum(["reasoning", "message", "tool"]),
+  /** Wait before this step is emitted: the gap to the previous event. */
+  delayMs: z.number().int().min(0).optional(),
+  /** The text of a reasoning or message step. */
+  text: z.string().optional(),
+  /** The tool a tool step calls. */
+  tool: ToolSpecSchema.optional(),
+});
+
 export const ReplySchema = z.object({
   text: z.string().optional(),
   reasoning: z.string().optional(),
@@ -75,6 +93,7 @@ export const ReplySchema = z.object({
   outcome: z.enum(["completed", "failed", "canceled", "hang"]).optional(),
   error: z.string().optional(),
   expect: z.string().optional(),
+  steps: z.array(StepSchema).optional(),
 });
 
 export const ScriptSchema = z.object({
@@ -84,4 +103,5 @@ export const ScriptSchema = z.object({
 
 export type ToolSpec = z.infer<typeof ToolSpecSchema>;
 export type Reply = z.infer<typeof ReplySchema>;
+export type Step = z.infer<typeof StepSchema>;
 export type Script = z.infer<typeof ScriptSchema>;

@@ -1,4 +1,4 @@
-import { ToolDetailSchema, type Reply, type Script, type ToolSpec } from "../schema";
+import { ToolDetailSchema, type Reply, type Script, type Step, type ToolSpec } from "../schema";
 
 export interface TimelineEntry {
   item: { type: string; [k: string]: unknown };
@@ -57,64 +57,88 @@ function shapeDetail(detail: unknown, name: string, o: ConvertOptions, cut: (s: 
   return { type: "plain_text", label: name, text: cut(JSON.stringify(detail ?? null)) };
 }
 
-function delayMs(user: TimelineEntry, first: TimelineEntry | undefined, o: ConvertOptions): number | undefined {
-  if (o.delay.mode === "drop" || !first) return undefined;
-  const a = Date.parse(user.timestamp ?? "");
-  const b = Date.parse(first.timestamp ?? "");
-  if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
-  const raw = Math.max(0, b - a) * (o.delay.mode === "scale" ? o.delay.factor : 1);
-  const ms = Math.min(MAX_DELAY, Math.round(raw));
-  return ms > 0 ? ms : undefined;
-}
-
-function toReply(turn: Turn, o: ConvertOptions): Reply {
-  const cut = truncator(o.truncateAt);
-  const reply: Reply = { expect: str(turn.user.item.text) ?? "" };
-  const messages = new Map<string, string>();
-  const reasoning = new Map<string, string>();
-  const tools = new Map<string, ToolSpec>();
+/**
+ * The timed steps of a turn, in the order the agent produced them.
+ *
+ * Every step carries the real gap to the previous event, so thinking time, each tool call and
+ * each message keep their own duration and the replay of a recorded turn takes as long as the
+ * original did. `scale` divides the gaps, `drop` removes them.
+ */
+function stepsOf(turn: Turn, o: ConvertOptions, cut: (s: string) => string): Step[] {
+  const steps: Step[] = [];
+  const scale = o.delay.mode === "scale" ? o.delay.factor : 1;
+  let previous = Date.parse(turn.user.timestamp ?? "");
+  const messageIndex = new Map<string, number>(); // messageId -> index in steps
+  const toolIndex = new Map<string, number>(); // callId -> index in steps
   let anon = 0;
-  let failure: string | undefined;
 
   for (const e of turn.rest) {
     const it = e.item;
-    const text = str(it.text);
+    const at = Date.parse(e.timestamp ?? "");
+    const raw = Number.isNaN(previous) || Number.isNaN(at) ? 0 : Math.max(0, at - previous);
+    if (!Number.isNaN(at)) previous = at;
+    const delayMs = o.delay.mode === "drop" ? undefined : Math.min(MAX_DELAY, Math.round(raw * scale)) || undefined;
+
     switch (it.type) {
-      case "assistant_message":
-        if (text !== undefined) {
-          const key = str(it.messageId) ?? str(it.id) ?? `anon-${anon++}`;
-          const prev = messages.get(key);
-          // Same id twice: a growing snapshot replaces; unrelated text (e.g. after a tool call) is appended.
-          messages.set(key, prev !== undefined && !text.startsWith(prev) ? prev + text : text);
+      case "assistant_message": {
+        const text = str(it.text);
+        if (text === undefined) break;
+        const key = str(it.messageId) ?? str(it.id) ?? `anon-${anon++}`;
+        const seen = messageIndex.get(key);
+        if (seen !== undefined) {
+          // A growing snapshot replaces the text; unrelated text (e.g. after a tool call) is appended.
+          const step = steps[seen];
+          step.text = step.text !== undefined && !text.startsWith(step.text) ? `${step.text}${text}` : text;
+          break;
         }
+        messageIndex.set(key, steps.length);
+        steps.push({ kind: "message", text: cut(text), delayMs });
         break;
-      case "reasoning":
-        if (text !== undefined) reasoning.set(str(it.id) ?? `anon-${anon++}`, text);
+      }
+      case "reasoning": {
+        const text = str(it.text);
+        if (text === undefined) break;
+        steps.push({ kind: "reasoning", text: cut(text), delayMs });
         break;
+      }
       case "tool_call": {
         const key = str(it.callId) ?? str(it.id) ?? `anon-${anon++}`;
         const status = str(it.status) as ToolSpec["status"];
         const spec: ToolSpec = { name: str(it.name) ?? "tool", detail: shapeDetail(it.detail, str(it.name) ?? "tool", o, cut) };
         if (status && status !== "completed") spec.status = status;
         if (status === "failed") spec.error = typeof it.error === "string" ? it.error : JSON.stringify(it.error ?? "failed");
-        tools.set(key, spec);
+        const seen = toolIndex.get(key);
+        if (seen !== undefined) {
+          // The same call reported again (running -> completed): one tool, the latest status.
+          steps[seen].tool = spec;
+          break;
+        }
+        toolIndex.set(key, steps.length);
+        steps.push({ kind: "tool", tool: spec, delayMs });
         break;
       }
-      case "error":
-        failure = str(it.message) ?? "error";
-        break;
       default:
         break;
     }
   }
+  return steps;
+}
 
-  const start = delayMs(turn.user, turn.rest.find((e) => ["assistant_message", "reasoning", "tool_call", "error"].includes(e.item.type)), o);
-  if (start !== undefined) reply.startDelayMs = start;
-  if (o.includeReasoning && reasoning.size) reply.reasoning = cut([...reasoning.values()].join("\n\n"));
-  if (tools.size) reply.tools = [...tools.values()];
-  const texts = [...messages.values()].map(cut);
-  if (texts.length === 1) reply.text = texts[0];
-  else if (texts.length > 1) reply.messages = texts;
+function toReply(turn: Turn, o: ConvertOptions): Reply {
+  const cut = truncator(o.truncateAt);
+  const reply: Reply = { expect: str(turn.user.item.text) ?? "" };
+  let failure: string | undefined;
+
+  for (const e of turn.rest) {
+    if (e.item.type === "error") failure = str(e.item.message) ?? "error";
+  }
+
+  const steps = stepsOf(turn, o, cut);
+  if (steps.length) {
+    // The steps carry the timing; the aggregated fields would only duplicate them.
+    reply.steps = steps;
+    if (o.includeReasoning === false) reply.steps = steps.filter((s) => s.kind !== "reasoning");
+  }
   if (failure !== undefined) {
     reply.outcome = "failed";
     reply.error = failure;

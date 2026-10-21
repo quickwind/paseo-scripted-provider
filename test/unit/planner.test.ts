@@ -40,4 +40,40 @@ describe("planReply", () => {
   it("empty reply is just an end", () => {
     expect(planReply({}, key)).toEqual([{ t: "end", outcome: "completed", error: undefined }]);
   });
+
+  describe("timed steps (recorded conversations)", () => {
+    it("waits for each step and emits it in order", () => {
+      const a = planReply(
+        {
+          steps: [
+            { kind: "reasoning", text: "thinking", delayMs: 2000 },
+            { kind: "tool", delayMs: 1000, tool: { name: "Bash", detail: { type: "plain_text" } } },
+            { kind: "message", text: "done", delayMs: 500 },
+          ],
+        },
+        key,
+      );
+      expect(kinds(a)).toEqual(["sleep", "reasoning", "sleep", "tool", "sleep", "assistant", "end"]);
+      expect(a.filter((x) => x.t === "sleep").map((x: any) => x.ms)).toEqual([2000, 1000, 500]);
+    });
+    it("the waits add up to the recorded duration", () => {
+      const a = planReply(
+        {
+          steps: [
+            { kind: "reasoning", text: "t", delayMs: 12000 },
+            { kind: "tool", delayMs: 3000, tool: { name: "B", detail: { type: "plain_text" } } },
+            { kind: "message", text: "x", delayMs: 900 },
+          ],
+        },
+        key,
+      );
+      const total = a.filter((x) => x.t === "sleep").reduce((sum, x: any) => sum + x.ms, 0);
+      expect(total).toBe(15900);
+    });
+    it("steps win over the aggregated fields", () => {
+      const a = planReply({ text: "ignored", startDelayMs: 999, steps: [{ kind: "message", text: "kept", delayMs: 5 }] }, key);
+      expect(kinds(a)).toEqual(["sleep", "assistant", "end"]);
+      expect((a.find((x) => x.t === "assistant") as any).text).toBe("kept");
+    });
+  });
 });

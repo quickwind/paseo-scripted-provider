@@ -10,6 +10,17 @@ const SCRIPT = {
     stream: [{ chunks: ["a", "b", "c"], chunkDelayMs: 50 }],
     replay: [{ expect: "alpha", text: "A" }, { expect: "beta", text: "B" }, { expect: "gamma", text: "C" }],
     tools: [{ tools: [{ name: "Bash", detail: { type: "shell", command: "ls", output: "x", exitCode: 0 } }], text: "done" }],
+    // A recorded reply: every step waits for its own gap.
+    timed: [
+      {
+        expect: "go",
+        steps: [
+          { kind: "reasoning", text: "thinking about it", delayMs: 700 },
+          { kind: "tool", delayMs: 200, tool: { name: "Bash", detail: { type: "shell", command: "ls", output: "x", exitCode: 0 } } },
+          { kind: "message", text: "timed reply", delayMs: 400 },
+        ],
+      },
+    ],
   },
 };
 
@@ -111,8 +122,17 @@ describe("scripted provider on a real daemon", () => {
     assert.deepEqual(await assistantTexts(agent.id), ["first line\nsecond line\n", "a multi-line\nreply\n"]);
   });
 
-  it("serializes and merges scripts on the daemon (the client bundle ships no YAML parser)", async () => {
-    const exported = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "scripted.export", {
+  it("replays a recorded reply with its original delays", async () => {
+    const started = Date.now();
+    const agent = await env.createAgent({ scenario: "timed", prompt: "go" });
+    await env.waitForFinish(agent.id);
+    const elapsed = Date.now() - started;
+    // The steps wait 700 + 200 + 400 ms; the agent start adds a little.
+    assert.ok(elapsed >= 1250, `replay took ${elapsed}ms, expected at least 1250ms`);
+    assert.deepEqual(await assistantTexts(agent.id), ["timed reply"]);
+  });
+
+  it("serializes and merges scripts on the daemon (the client bundle ships no YAML parser)", async () => {    const exported = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "scripted.export", {
       script: { scenarios: { a: [{ text: "hi" }] } },
       format: "yaml",
     });

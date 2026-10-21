@@ -16,6 +16,25 @@ export function planReply(reply: Reply, newKey: () => string = () => globalThis.
     if (ms && ms > 0) out.push({ t: "sleep", ms });
   };
 
+  // A recorded reply keeps its original pacing in `steps`: every thinking block, tool call and
+  // message waits for its own gap, so a replay takes as long as the recorded turn did.
+  if (reply.steps && reply.steps.length) {
+    for (const step of reply.steps) {
+      sleep(step.delayMs);
+      if (step.kind === "reasoning") {
+        out.push({ t: "reasoning", key: newKey(), text: step.text ?? "" });
+      } else if (step.kind === "message") {
+        out.push({ t: "assistant", key: newKey(), text: step.text ?? "" });
+      } else if (step.tool) {
+        const spec = step.tool;
+        out.push({ t: "tool", key: newKey(), spec, status: spec.status ?? "completed" });
+      }
+    }
+    sleep(reply.delayMs);
+    out.push({ t: "end", outcome: reply.outcome ?? "completed", error: reply.error });
+    return out;
+  }
+
   sleep(reply.startDelayMs);
   if (reply.reasoning !== undefined) out.push({ t: "reasoning", key: newKey(), text: reply.reasoning });
 

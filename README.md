@@ -80,7 +80,25 @@ scenarios:
       startDelayMs: 1500
       outcome: failed
       error: "Connection timed out"
+
+  # Scenario 4: Timed steps - what a recorded conversation looks like
+  recorded:
+    - expect: "deploy the service"
+      steps:
+        - { kind: reasoning, text: "Checking the deploy script...", delayMs: 1200 }
+        - kind: tool
+          delayMs: 300
+          tool:
+            name: Bash
+            detail: { type: shell, command: "npm run deploy", exitCode: 0, output: "ok" }
+        - { kind: message, text: "Deployed.", delayMs: 800 }
 ```
+
+### Timed steps
+
+A reply can be a list of `steps` instead of the aggregated `text` / `messages` / `tools` fields. Each step waits for its own `delayMs` before it appears, and the steps run in order - so a recorded conversation keeps the pacing of the original: thinking time, every tool call and every message keep their own duration, and the replay takes as long as the recorded turn did.
+
+`kind` is `reasoning`, `message` or `tool`; a `tool` step carries the usual tool fields under `tool`. `delayMs` is optional. Hand-written scripts usually use the simpler `text` / `chunks` / `messages` / `tools` fields and need no steps.
 
 The same in JSON:
 
@@ -133,7 +151,7 @@ Every conversation gets a **Record as script** button (clapperboard icon) next t
 
 > **Desktop and web only.** The review screen is a dense, desktop-sized UI (a long list of steps, a decision per suspicious value, inline editing, a file download), so the iOS app does not offer it - the button and the screen are not registered there. The rest of the plugin (settings, `/scripted-next`, `/scripted-reset`, the provider itself) works on iOS.
 
-1. Choose a name, how many recent turns, what to do with timing (keep / scale ×k / remove), whether to include reasoning and tool output, and a truncation length.
+1. Choose a name, how many recent turns, what to do with timing (keep / scale ×k / remove), whether to include reasoning and tool output, and a truncation length. **Keep** records the real pacing of every step - thinking, each tool call, each message - as [timed steps](#timed-steps), so the replay takes as long as the original turn did.
 2. **Preview & redact.** Each step is shown with automatic replacements highlighted:
    - formatted secrets are replaced: AWS keys, GitHub tokens, `sk-…` keys, Slack tokens, JWTs, PEM private keys, `Bearer` tokens, URL passwords, email addresses, the user name in `/Users/x`, `/home/x`, `C:\Users\x`, and the session's working directory (`{{cwd}}`);
    - what a value is replaced with: secrets `{{secret_N}}`, the user name in a home path `{{user_N}}`, the working directory `{{cwd}}`, values you redact by hand `{{redacted_N}}`, and email addresses `{{email_N}}`; the same value always gets the same replacement, so references stay consistent;

@@ -89,6 +89,7 @@ export function resolveReply(script: Script, scenario: string, step: number): { 
       reasoning: expandMacro(raw.reasoning, m),
       chunks: raw.chunks?.map((c) => expandMacro(c, m) ?? ""),
       messages: raw.messages?.map((c) => expandMacro(c, m) ?? ""),
+      steps: raw.steps?.map((s) => (s.text === undefined ? s : { ...s, text: expandMacro(s.text, m) })),
     },
   };
 }
