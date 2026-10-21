@@ -131,6 +131,8 @@ Set a log file in settings (or run with `SCRIPTED_PROVIDER_STATE=<dir>`, which u
 
 Every conversation gets a **Record as script** button (clapperboard icon) next to the message box; it records that conversation.
 
+> **Desktop and web only.** The review screen is a dense, desktop-sized UI (a long list of steps, a decision per suspicious value, inline editing, a file download), so the iOS app does not offer it - the button and the screen are not registered there. The rest of the plugin (settings, `/scripted-next`, `/scripted-reset`, the provider itself) works on iOS.
+
 1. Choose a name, how many recent turns, what to do with timing (keep / scale ×k / remove), whether to include reasoning and tool output, and a truncation length.
 2. **Preview & redact.** Each step is shown with automatic replacements highlighted:
    - formatted secrets are replaced: AWS keys, GitHub tokens, `sk-…` keys, Slack tokens, JWTs, PEM private keys, `Bearer` tokens, URL passwords, email addresses, the user name in `/Users/x`, `/home/x`, `C:\Users\x`, and the session's working directory (`{{cwd}}`);
@@ -138,7 +140,7 @@ Every conversation gets a **Record as script** button (clapperboard icon) next t
    - colors in the review: orange = the selected item, yellow = looks like a secret and needs your decision, green = replaced automatically, gray = you kept it, red = original restored (it will be exported);
    - tap a highlight to restore the original; **Edit** a step; select text while editing and **Redact selection** to replace that value everywhere;
    - high-entropy strings no rule recognized are *listed, never changed*: you must confirm each (**Redact** or **Keep**) before export is enabled.
-3. Choose **YAML** (default) or **JSON**, then **Download** (web/desktop) or **Copy to clipboard** (mobile), or **Replay now** to save the scenario into your settings and open a Scripted agent running it.
+3. Choose **YAML** (default) or **JSON**, then **Download** (web/desktop) or **Copy to clipboard**, or **Replay now** to save the scenario into your settings and open a Scripted agent running it.
 
 Example of an exported recording from a real agent session (secrets and paths automatically neutralized):
 

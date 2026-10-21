@@ -80,3 +80,7 @@ npm run vendor:yaml
    - Use plain functions and `async function` expressions in anything reachable from `index.client.tsx`.
    - `npm run check:hermes` compiles the bundle with the Hermes compiler from `react-native` and fails the build
      if the mobile engine cannot load it.
+
+7. **The Record Flow Is Desktop-Only**:
+   - The record-and-review screen is a dense, desktop-sized UI; iOS does not get the entry point.
+   - Gate it with `supportsRecordFlow(Platform.OS)` in `client/platform.ts`; do not ship a button that errors.
