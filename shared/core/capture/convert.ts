@@ -121,6 +121,18 @@ function stepsOf(turn: Turn, o: ConvertOptions, cut: (s: string) => string): Ste
         break;
     }
   }
+
+  // A tool runs between its own event and the next one: that gap belongs to the tool, not to the
+  // step after it. Move it, so a replay shows the tool running for its real time instead of
+  // appearing complete right away.
+  for (let i = 0; i < steps.length - 1; i++) {
+    const step = steps[i];
+    if (step.kind !== "tool" || !step.tool) continue;
+    const next = steps[i + 1];
+    if (next.delayMs === undefined) continue;
+    step.tool.runningMs = next.delayMs;
+    next.delayMs = undefined;
+  }
   return steps;
 }
 

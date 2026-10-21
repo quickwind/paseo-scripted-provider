@@ -27,7 +27,13 @@ export function planReply(reply: Reply, newKey: () => string = () => globalThis.
         out.push({ t: "assistant", key: newKey(), text: step.text ?? "" });
       } else if (step.tool) {
         const spec = step.tool;
-        out.push({ t: "tool", key: newKey(), spec, status: spec.status ?? "completed" });
+        const key = newKey();
+        // A tool that took time runs first and completes after the wait.
+        if (spec.runningMs && spec.runningMs > 0) {
+          out.push({ t: "tool", key, spec, status: "running" });
+          sleep(spec.runningMs);
+        }
+        out.push({ t: "tool", key, spec, status: spec.status ?? "completed" });
       }
     }
     sleep(reply.delayMs);

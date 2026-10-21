@@ -61,10 +61,15 @@ describe("convertTimeline", () => {
   describe("timing", () => {
     it("every step keeps its real gap to the previous event", () => {
       const s = steps([user("q", 0), { item: { type: "reasoning", text: "thinking" }, timestamp: at(2) }, tool("c", "completed", undefined, {}, 3), asst("a", "m", 5)])[0].steps!;
-      // reasoning: 2s after the user message, tool: 1s later, message: 2s later
+      // reasoning: 2s after the user message; tool: 1s later; message: 2s later -
+      // and the gap after the tool belongs to the tool, so the message has no delay of its own.
       expect(s[0]).toMatchObject({ kind: "reasoning", delayMs: 2000 });
-      expect(s[1]).toMatchObject({ kind: "tool", delayMs: 1000 });
-      expect(s[2]).toMatchObject({ kind: "message", delayMs: 2000 });
+      expect(s[1]).toMatchObject({ kind: "tool", delayMs: 1000, tool: { runningMs: 2000 } });
+      expect(s[2]).toMatchObject({ kind: "message", delayMs: undefined });
+    });
+    it("a tool carries the time it took to run", () => {
+      const s = steps([user("q", 0), tool("c", "completed", undefined, {}, 1), asst("a", "m", 4)])[0].steps!;
+      expect(s[0]).toMatchObject({ kind: "tool", delayMs: 1000, tool: { runningMs: 3000 } });
     });
     it("the steps add up to the real duration of the turn", () => {
       const s = steps([user("q", 0), { item: { type: "reasoning", text: "t" }, timestamp: at(2) }, asst("a", "m", 5)])[0].steps!;
