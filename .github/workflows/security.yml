@@ -1,0 +1,60 @@
+name: Security (Snyk)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix testkit
+      # Pinned: this job holds a Snyk token.
+      - uses: snyk/actions/setup@11b673cfb4b0dc0d860a1323caa199d54950dcce
+      # Gate and badge cover the plugin's own package.json including devDependencies (known, documented
+      # exceptions live in .snyk with reasons and expiry). testkit/ pins Paseo's own server package to run a
+      # real daemon in tests (never shipped); it is scanned separately for visibility only.
+      - name: Dependency scan of the plugin (record results)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: snyk test --file=package.json --dev --json-file-output=snyk.json || true
+      - name: Dependency scan of the plugin (fail on high/critical)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: snyk test --file=package.json --dev --severity-threshold=high
+      - name: Dependency scan of the testkit (informational)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
+        run: snyk test --file=testkit/package.json --json-file-output=snyk-testkit.json
+      - name: Code scan (SAST, informational)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
+        run: snyk code test --sarif-file-output=snyk-code.sarif
+      - name: Monitor on Snyk
+        if: ${{ env.SNYK_TOKEN != '' && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        run: snyk monitor --file=package.json --dev
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snyk
+          path: |
+            snyk.json
+            snyk-testkit.json
+            snyk-code.sarif
+          if-no-files-found: ignore
+

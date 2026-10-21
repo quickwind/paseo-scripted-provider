@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Typecheck, unit and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: "Tests with coverage (gate 85% lines)"
+        run: npm run test:coverage
+      - name: Quality summary
+        if: always()
+        run: node scripts/make-badges.mjs --summary >> "$GITHUB_STEP_SUMMARY"
+      - name: Build badge files
+        if: always()
+        run: node scripts/make-badges.mjs --out badges --only tests,coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports
+          path: |
+            reports/
+            badges/
+          retention-days: 14
+
+  e2e:
+    name: E2E on a real Paseo daemon (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # Paseo 0.11.4 needs Node >= 21.3; CI uses Node 22 LTS.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: testkit/package-lock.json
+      - run: npm ci --prefix testkit
+      - name: Run e2e
+        run: node --test --test-timeout=300000 "e2e/*.test.mjs"
+        env:
+          E2E_TIME_SCALE: "1.5"
+          E2E_OUT: ${{ runner.temp }}/e2e-logs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/e2e-logs
+          retention-days: 7
+
+  badges:
+    name: Publish quality badges
+    needs: [unit, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: reports
+          path: .
+      - run: node scripts/publish-badges.mjs badges
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
