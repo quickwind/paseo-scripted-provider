@@ -48,9 +48,6 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' && github.event_name != 'pull_request' }}
         continue-on-error: true
         run: snyk monitor --file=package.json --dev
-      - name: Build Snyk badge file
-        if: ${{ always() && hashFiles('snyk.json') != '' }}
-        run: node scripts/make-badges.mjs --out badges --only snyk
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -59,26 +56,5 @@ jobs:
             snyk.json
             snyk-testkit.json
             snyk-code.sarif
-            badges/
           if-no-files-found: ignore
 
-  publish-badge:
-    name: Publish Snyk badge
-    needs: snyk
-    # always(): a failing gate must still refresh the badge, otherwise it keeps saying "0 vulnerabilities".
-    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: snyk
-          path: .
-        continue-on-error: true
-      - name: Publish
-        if: ${{ hashFiles('badges/snyk.json') != '' }}
-        run: node scripts/publish-badges.mjs badges
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

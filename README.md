@@ -1,7 +1,7 @@
 [![CI](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml/badge.svg)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Ftests.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Fcoverage.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
-[![Snyk](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Fsnyk.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml)
+[![Snyk](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml/badge.svg)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml)
 [![license: MIT](https://img.shields.io/github/license/quickwind/paseo-scripted-provider)](LICENSE)
 [![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0%20%3C0.13-blue)](#compatibility)
 
