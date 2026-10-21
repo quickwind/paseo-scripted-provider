@@ -209,6 +209,8 @@ Permission-approval flows, real MCP calls from scripts, template variables, prom
 
 `shared/vendor/yaml.js` is the [`yaml`](https://github.com/eemeli/yaml) package (ISC, `shared/vendor/yaml.LICENSE`) bundled into one file. The Paseo daemon compiles plugins itself and only provides its plugin SDK and `zod`, so a dependency has to ship inside the plugin; a committed bundle means installing needs no npm and no network. Regenerate with `npm run vendor:yaml` (a test checks the bundle matches the `yaml` version in `package.json`).
 
+The parser ships in the **server** half of the plugin only. The client half asks the daemon to parse and serialize scripts over RPC (`scripted.export`, `scripted.merge-scenario`), which keeps the mobile client bundle free of a 98 kB parser — `npm run check:client-bundle` fails the build if YAML ever sneaks back in.
+
 ## License
 
 [MIT](LICENSE) © 2026 quickwind

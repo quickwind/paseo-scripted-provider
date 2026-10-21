@@ -5,7 +5,9 @@ import { resolveConfig, type ResolvedConfig } from "./server/config";
 import { createRecorder } from "./server/recorder";
 import { createScriptedProvider } from "./server/provider";
 import { scenarioNames } from "./shared/core/script";
-import { captureRpc, getStatusRpc, readRecordRpc, scriptedSettings } from "./shared/rpc";
+import { addScenarioToSettings, serializeScript } from "./shared/core/capture/export";
+import type { Script } from "./shared/core/schema";
+import { captureRpc, exportScriptRpc, getStatusRpc, mergeScenarioRpc, readRecordRpc, scriptedSettings } from "./shared/rpc";
 
 type SettingsValues = { scripts?: string; scriptFile?: string; recordFile?: string; alignment?: string };
 
@@ -53,6 +55,14 @@ export default function contribute(server: PluginServerContext) {
       entries: [...page.entries] as unknown[],
       agent: a ? { id: agentId, cwd: str(a.cwd), title: str(a.title), provider: str(a.provider), model: str(a.model) } : null,
     };
+  });
+
+  // The YAML parser lives on this side: the client bundle never ships it.
+  server.handle(exportScriptRpc, ({ script, format }) => ({ text: serializeScript(script as Script, format) }));
+
+  server.handle(mergeScenarioRpc, ({ script, name, existingText, format }) => {
+    const merged = addScenarioToSettings(existingText, name, script as Script, format);
+    return merged.ok ? { ok: true, text: merged.text, name: merged.name } : { ok: false, error: merged.error };
   });
 
   return () => {

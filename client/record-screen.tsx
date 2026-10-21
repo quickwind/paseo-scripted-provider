@@ -4,10 +4,9 @@ import { ScrollView, TextInput, copyText, useToast } from "@getpaseo/plugin/clie
 import React, { useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View, useWindowDimensions, type ScrollView as NativeScrollView } from "react-native";
 import type { ConvertOptions, TimelineEntry } from "../shared/core/capture/convert";
-import { addScenarioToSettings, safeScenarioName, scriptFilename, type ScriptFormat } from "../shared/core/capture/export";
-import { parseScript } from "../shared/core/script";
-import { captureRpc, scriptedSettings } from "../shared/rpc";
-import { buildReview, canExport, confirmSuspicious, editStep, exportText, pendingConfirms, redactSelection, resolveAll, restoreFinding, reviewItems, stepsView, type EditField, type ReviewItem, type ReviewModel } from "./state";
+import { safeScenarioName, scriptFilename, type ScriptFormat } from "../shared/core/capture/script-format";
+import { captureRpc, exportScriptRpc, mergeScenarioRpc, scriptedSettings } from "../shared/rpc";
+import { buildReview, canExport, confirmSuspicious, editStep, exportScript, pendingConfirms, redactSelection, resolveAll, restoreFinding, reviewItems, stepsView, type EditField, type ReviewItem, type ReviewModel } from "./state";
 import { highlight, LEGEND, type HighlightState } from "./palette";
 import { canDownload, downloadFile } from "./web";
 
@@ -22,6 +21,8 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   const workspaceId = params.workspaceId ?? "";
   const { colors } = theme;
   const capture = useRpc(captureRpc);
+  const exportScriptRpcCall = useRpc(exportScriptRpc);
+  const mergeScenarioRpcCall = useRpc(mergeScenarioRpc);
   const paseo = usePaseo();
   const settings = useSettings(scriptedSettings);
   const toast = useToast();
@@ -139,7 +140,14 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
 
   const doExport = async () => {
     if (!model || !canExport(model)) return;
-    const text = exportText(model, format);
+    let text: string;
+    try {
+      // The daemon owns the YAML parser, so the client bundle never ships it.
+      text = (await exportScriptRpcCall({ script: exportScript(model), format })).text;
+    } catch (e) {
+      toast.error(`Could not serialize the script: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     if (canDownload) {
       downloadFile(scriptFilename(model.name, new Date(), format), text, format === "yaml" ? "application/yaml;charset=utf-8" : undefined);
       toast.show("Script downloaded");
@@ -152,10 +160,18 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   const doReplay = async () => {
     if (!model || !canExport(model)) return;
     if (settings.status !== "ready") return toast.error("Settings are not loaded yet; try again in a moment");
-    const parsed = parseScript(exportText(model));
-    if (!parsed.ok) return toast.error(parsed.error);
-    const merged = addScenarioToSettings(settings.values.scripts, model.name, parsed.script);
-    if (!merged.ok) return toast.error(`Existing script is invalid: ${merged.error}`);
+    let merged: { ok: boolean; text?: string; name?: string; error?: string };
+    try {
+      merged = await mergeScenarioRpcCall({
+        script: exportScript(model),
+        name: model.name,
+        existingText: settings.values.scripts,
+      });
+    } catch (e) {
+      toast.error(`Could not build the script: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (!merged.ok || !merged.text || !merged.name) return toast.error(`Existing script is invalid: ${merged.error ?? "unknown error"}`);
     if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error("Could not save the script");
     try {
       const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: `Replay: ${merged.name}` };

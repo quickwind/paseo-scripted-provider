@@ -1,5 +1,4 @@
 import { convertTimeline, type ConvertOptions, type TimelineEntry } from "../shared/core/capture/convert";
-import { serializeScript, type ScriptFormat } from "../shared/core/capture/export";
 import { Redactor, type Segment } from "../shared/core/capture/redact";
 import type { Reply, Script } from "../shared/core/schema";
 
@@ -105,8 +104,8 @@ export function editStep(m: ReviewModel, index: number, field: EditField, value:
   return { ...m, script: { ...m.script, scenarios: { ...m.script.scenarios, [m.name]: list } } };
 }
 
-export function exportText(m: ReviewModel, format: ScriptFormat = "json"): string {
-  return serializeScript(m.redactor.applyDeep(m.script), format);
+export function exportScript(m: ReviewModel): Script {
+  return m.redactor.applyDeep(m.script);
 }
 
 export interface ReviewItem {

@@ -28,6 +28,8 @@ jobs:
       - run: npm run typecheck
       - name: "Check what would be published"
         run: npm run verify:package
+      - name: "Check the client bundle stays YAML-free"
+        run: npm run check:client-bundle
       - name: "Tests with coverage (gate 90% lines)"
         run: npm run test:coverage
       - name: Quality summary

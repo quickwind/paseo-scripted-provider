@@ -53,7 +53,7 @@ describe("buildScript", () => {
 });
 
 describe("contribute", () => {
-  it("registers provider, settings and RPC handlers, and returns a cleanup", () => {
+  const harness = () => {
     const registerProvider = vi.fn();
     const handle = vi.fn();
     const registerSettings = vi.fn(() => ({
@@ -61,9 +61,58 @@ describe("contribute", () => {
       subscribe: () => () => {},
     }));
     const cleanup = contribute({ registerProvider, handle, registerSettings } as never);
+    const handler = (name: string) => {
+      const call = handle.mock.calls.find((c) => c[0].name === name);
+      if (!call) throw new Error(`no handler for ${name}`);
+      return call[1] as (input: unknown, ctx?: unknown) => unknown;
+    };
+    return { registerProvider, handle, registerSettings, cleanup, handler };
+  };
+
+  it("registers provider, settings and RPC handlers, and returns a cleanup", () => {
+    const { registerProvider, handle, registerSettings, cleanup } = harness();
     expect(registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "scripted" }));
     expect(registerSettings).toHaveBeenCalledWith(expect.objectContaining({ id: "scripted-provider" }));
-    expect(handle.mock.calls.map((c) => c[0].name).sort()).toEqual(["scripted.capture", "scripted.read-record", "scripted.status"]);
+    expect(handle.mock.calls.map((c) => c[0].name).sort()).toEqual([
+      "scripted.capture",
+      "scripted.export",
+      "scripted.merge-scenario",
+      "scripted.read-record",
+      "scripted.status",
+    ]);
     expect(typeof cleanup).toBe("function");
+  });
+
+  it("serializes a script to YAML on the daemon, where the YAML parser lives", () => {
+    const { handler } = harness();
+    const out = handler("scripted.export")({ script: { scenarios: { a: [{ text: "hi" }] } }, format: "yaml" }) as { text: string };
+    expect(out.text).toContain("scenarios:");
+    expect(out.text).toContain("hi");
+  });
+
+  it("merges a recorded scenario into existing YAML, keeping comments", () => {
+    const { handler } = harness();
+    const existing = "# my notes\nscenarios:\n  keep:\n    - text: 'old'\n";
+    const out = handler("scripted.merge-scenario")({
+      script: { scenarios: { recorded: [{ text: "new" }] } },
+      name: "recorded",
+      existingText: existing,
+    }) as { ok: boolean; text?: string; name?: string; error?: string };
+    expect(out.ok).toBe(true);
+    expect(out.name).toBe("recorded");
+    expect(out.text).toContain("# my notes");
+    expect(out.text).toContain("keep:");
+    expect(out.text).toContain("recorded:");
+  });
+
+  it("reports an invalid existing script instead of writing it", () => {
+    const { handler } = harness();
+    const out = handler("scripted.merge-scenario")({
+      script: { scenarios: { recorded: [{ text: "new" }] } },
+      name: "recorded",
+      existingText: "{nope",
+    }) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toBeTruthy();
   });
 });

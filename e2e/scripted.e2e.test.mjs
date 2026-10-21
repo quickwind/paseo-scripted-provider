@@ -81,8 +81,7 @@ describe("scripted provider on a real daemon", () => {
     assert.deepEqual(await assistantTexts(agent.id), ["B", "C", "A"]);
   });
 
-  it("compiles and runs a YAML script (vendored yaml inside the daemon-compiled plugin)", async () => {
-    const yaml = [
+  it("compiles and runs a YAML script (vendored yaml inside the daemon-compiled plugin)", async () => {    const yaml = [
       "# comments are allowed",
       "macros:",
       "  HELLO: |",
@@ -110,5 +109,25 @@ describe("scripted provider on a real daemon", () => {
     await ref.run("one");
     await ref.run("two");
     assert.deepEqual(await assistantTexts(agent.id), ["first line\nsecond line\n", "a multi-line\nreply\n"]);
+  });
+
+  it("serializes and merges scripts on the daemon (the client bundle ships no YAML parser)", async () => {
+    const exported = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "scripted.export", {
+      script: { scenarios: { a: [{ text: "hi" }] } },
+      format: "yaml",
+    });
+    assert.match(exported.text, /scenarios:/);
+    assert.match(exported.text, /hi/);
+
+    const merged = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "scripted.merge-scenario", {
+      script: { scenarios: { recorded: [{ text: "new" }] } },
+      name: "recorded",
+      existingText: "# keep my notes\nscenarios:\n  keep:\n    - text: 'old'\n",
+    });
+    assert.equal(merged.ok, true, JSON.stringify(merged));
+    assert.equal(merged.name, "recorded");
+    assert.match(merged.text, /# keep my notes/);
+    assert.match(merged.text, /keep:/);
+    assert.match(merged.text, /recorded:/);
   });
 });

@@ -1,5 +1,8 @@
 import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
+import { ScriptSchema } from "./core/schema";
+
+const formatSchema = z.enum(["json", "yaml"]);
 
 export const scriptedSettings = defineSettings({
   id: "scripted-provider",
@@ -45,3 +48,31 @@ export const captureRpc = defineRpc({
       .nullable(),
   }),
 });
+
+/**
+ * Serializes a script to text. The daemon owns the YAML parser: the client bundle stays free of it,
+ * so the mobile app never has to evaluate the parser (and the plugin client bundle halves in size).
+ */
+export const exportScriptRpc = defineRpc({
+  name: "scripted.export",
+  input: z.object({ script: ScriptSchema, format: formatSchema }),
+  output: z.object({ text: z.string() }),
+});
+
+/** Adds a recorded scenario to the user's existing script text, keeping the user's format and comments. */
+export const mergeScenarioRpc = defineRpc({
+  name: "scripted.merge-scenario",
+  input: z.object({
+    script: ScriptSchema,
+    name: z.string(),
+    existingText: z.string(),
+    format: formatSchema.optional(),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    text: z.string().optional(),
+    name: z.string().optional(),
+    error: z.string().optional(),
+  }),
+});
+

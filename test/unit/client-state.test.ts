@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildReview, canExport, confirmSuspicious, editStep, exportText, pendingConfirms, redactSelection, resolveAll, restoreFinding, reviewItems, stats, stepsView } from "../../client/state";
+import { buildReview, canExport, confirmSuspicious, editStep, exportScript, pendingConfirms, redactSelection, resolveAll, restoreFinding, reviewItems, stats, stepsView, type ReviewModel } from "../../client/state";
 import type { ConvertOptions, TimelineEntry } from "../../shared/core/capture/convert";
+import { serializeScript } from "../../shared/core/capture/export";
+import type { ScriptFormat } from "../../shared/core/capture/script-format";
 import { parseScript } from "../../shared/core/script";
+
+// The client only produces the redacted script; the daemon serializes it (that is where the YAML parser lives).
+const exportText = (m: ReviewModel, format: ScriptFormat = "json"): string => serializeScript(exportScript(m), format);
 
 const GH = "ghp_" + "a".repeat(36);
 const RAND = "k3J9xQ2mZp7LwR4vB8nT1yH6cD0sFgUa";

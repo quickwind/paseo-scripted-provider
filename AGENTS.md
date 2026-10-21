@@ -35,6 +35,9 @@ npm run test:coverage
 # Verify what would be published to npm (file list of the tarball)
 npm run verify:package
 
+# Verify the client bundle stays free of the YAML parser
+npm run check:client-bundle
+
 # End-to-end test against the published package on the npm registry
 npm run e2e:npm
 
@@ -62,3 +65,8 @@ npm run vendor:yaml
 4. **Zero State Pollution in E2E**:
    - E2E tests must always use `testkit` to spawn daemons with isolated `HOME` and `USERPROFILE` directories.
    - Never modify or rely on the host's global `~/.paseo` state.
+
+5. **The Daemon Owns YAML Parsing**:
+   - Script parsing and serialization live on the server side (`scripted.export`, `scripted.merge-scenario` RPCs).
+   - The client bundle must never contain `shared/vendor/yaml.js`: it is evaluated by Hermes on iOS, where the
+     minified parser broke the mobile app. `npm run check:client-bundle` enforces this.
