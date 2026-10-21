@@ -30,6 +30,8 @@ jobs:
         run: npm run verify:package
       - name: "Check the client bundle stays YAML-free"
         run: npm run check:client-bundle
+      - name: "Check the client bundle compiles with Hermes (the iOS engine)"
+        run: npm run check:hermes
       - name: "Tests with coverage (gate 90% lines)"
         run: npm run test:coverage
       - name: Quality summary

@@ -114,7 +114,8 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     toast.show(how === "redact" ? `Redacted ${pending} item(s)` : `Kept ${pending} item(s) as they are`);
   };
 
-  const preview = async () => {
+  // Async function expressions, not async arrows: the mobile app's engine has no async arrow functions.
+  const preview = async function preview() {
     setBusy(true);
     try {
       const { entries, agent } = await capture({ agentId });
@@ -138,7 +139,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     }
   };
 
-  const doExport = async () => {
+  const doExport = async function doExport() {
     if (!model || !canExport(model)) return;
     let text: string;
     try {
@@ -157,7 +158,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     }
   };
 
-  const doReplay = async () => {
+  const doReplay = async function doReplay() {
     if (!model || !canExport(model)) return;
     if (settings.status !== "ready") return toast.error("Settings are not loaded yet; try again in a moment");
     let merged: { ok: boolean; text?: string; name?: string; error?: string };

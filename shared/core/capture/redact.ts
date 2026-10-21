@@ -57,35 +57,48 @@ function entropy(s: string): number {
   return h;
 }
 
-export class Redactor {
-  private leading: Rule[] = []; // cwd + user literals: highest priority
-  private rules: Rule[];
-  private registry = new Map<string, Finding>();
-  private counters = new Map<string, number>();
-  private restoredValues = new Set<string>();
+export interface Redactor {
+  addLiteral(value: string, label?: string): void;
+  setRestored(original: string, restored: boolean): void;
+  segments(text: string): Segment[];
+  apply(text: string): string;
+  findings(): Finding[];
+  applyDeep<T>(value: T): T;
+  suspicious(text: string): string[];
+}
 
-  constructor(rules: Rule[] = DEFAULT_RULES, ctx: { cwd?: string } = {}) {
-    this.rules = rules;
-    if (ctx.cwd && ctx.cwd.length > 1) {
-      this.leading.push({ id: "cwd", kind: "path", label: "Session working directory", pattern: new RegExp(`${escapeRe(ctx.cwd)}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])`), fixed: "{{cwd}}" });
-    }
+/**
+ * A factory, not a class.
+ *
+ * The plugin's client bundle runs on Hermes, whose parser has no class expressions, and esbuild
+ * emits `var X = class {}` for every class it bundles. A class here made the mobile app fail to
+ * compile the plugin ("Invalid expression encountered"). Keep this a plain function.
+ */
+export function createRedactor(rules: Rule[] = DEFAULT_RULES, ctx: { cwd?: string } = {}): Redactor {
+  const leading: Rule[] = []; // cwd + user literals: highest priority
+  const registry = new Map<string, Finding>();
+  const counters = new Map<string, number>();
+  const restoredValues = new Set<string>();
+
+  if (ctx.cwd && ctx.cwd.length > 1) {
+    leading.push({ id: "cwd", kind: "path", label: "Session working directory", pattern: new RegExp(`${escapeRe(ctx.cwd)}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])`), fixed: "{{cwd}}" });
   }
 
-  addLiteral(value: string, label = "Custom value"): void {
+  function addLiteral(value: string, label = "Custom value"): void {
     if (!value) return;
-    if (this.leading.some((r) => r.id === `lit:${value}`)) return;
-    this.leading.push({ id: `lit:${value}`, kind: "literal", label, pattern: new RegExp(escapeRe(value)) });
+    if (leading.some((r) => r.id === `lit:${value}`)) return;
+    leading.push({ id: `lit:${value}`, kind: "literal", label, pattern: new RegExp(escapeRe(value)) });
   }
 
-  setRestored(original: string, restored: boolean): void {
-    if (restored) this.restoredValues.add(original);
-    else this.restoredValues.delete(original);
-    for (const f of this.registry.values()) if (f.original === original) f.restored = restored;
+  function setRestored(original: string, restored: boolean): void {
+    if (restored) restoredValues.add(original);
+    else restoredValues.delete(original);
+    for (const f of registry.values()) if (f.original === original) f.restored = restored;
   }
 
-  private candidates(text: string): Candidate[] {
+  function candidates(text: string): Candidate[] {
     const out: Candidate[] = [];
-    const all = [...this.leading.map((r) => ({ r, p: r.id === "cwd" ? 0 : 1 })), ...this.rules.map((r, i) => ({ r, p: 2 + i }))];
+    const all = [...leading.map((r) => ({ r, p: r.id === "cwd" ? 0 : 1 })), ...rules.map((r, i) => ({ r, p: 2 + i }))];
     for (const { r, p } of all) {
       const re = new RegExp(r.pattern.source, `g${r.pattern.flags.replace(/[gd]/g, "")}d`);
       for (const m of text.matchAll(re)) {
@@ -98,8 +111,8 @@ export class Redactor {
     return out;
   }
 
-  private pick(text: string): Candidate[] {
-    const sorted = this.candidates(text).sort((a, b) => a.start - b.start || a.priority - b.priority || b.end - a.end);
+  function pick(text: string): Candidate[] {
+    const sorted = candidates(text).sort((a, b) => a.start - b.start || a.priority - b.priority || b.end - a.end);
     const chosen: Candidate[] = [];
     let cursor = 0;
     for (const c of sorted) {
@@ -119,29 +132,29 @@ export class Redactor {
     return chosen;
   }
 
-  private findingFor(c: Candidate): Finding {
+  function findingFor(c: Candidate): Finding {
     const key = `${c.rule.id}\0${c.value}`;
-    let f = this.registry.get(key);
+    let f = registry.get(key);
     if (!f) {
       let placeholder = c.rule.fixed;
       if (!placeholder) {
         const prefix = PREFIX[c.rule.kind];
-        const n = (this.counters.get(prefix) ?? 0) + 1;
-        this.counters.set(prefix, n);
+        const n = (counters.get(prefix) ?? 0) + 1;
+        counters.set(prefix, n);
         placeholder = `{{${prefix}_${n}}}`;
       }
-      f = { id: key, ruleId: c.rule.id, original: c.value, placeholder, restored: this.restoredValues.has(c.value) };
-      this.registry.set(key, f);
+      f = { id: key, ruleId: c.rule.id, original: c.value, placeholder, restored: restoredValues.has(c.value) };
+      registry.set(key, f);
     }
     return f;
   }
 
-  segments(text: string): Segment[] {
+  function segments(text: string): Segment[] {
     const out: Segment[] = [];
     let at = 0;
-    for (const c of this.pick(text)) {
+    for (const c of pick(text)) {
       if (c.start > at) out.push({ text: text.slice(at, c.start) });
-      const f = this.findingFor(c);
+      const f = findingFor(c);
       out.push({ text: f.restored ? f.original : f.placeholder, finding: f });
       at = c.end;
     }
@@ -149,26 +162,26 @@ export class Redactor {
     return out;
   }
 
-  apply(text: string): string {
-    return this.segments(text).map((s) => s.text).join("");
+  function apply(text: string): string {
+    return segments(text).map((s) => s.text).join("");
   }
 
-  findings(): Finding[] {
-    return [...this.registry.values()];
+  function findings(): Finding[] {
+    return [...registry.values()];
   }
 
-  applyDeep<T>(value: T): T {
-    if (typeof value === "string") return this.apply(value) as unknown as T;
-    if (Array.isArray(value)) return value.map((v) => this.applyDeep(v)) as unknown as T;
+  function applyDeep<T>(value: T): T {
+    if (typeof value === "string") return apply(value) as unknown as T;
+    if (Array.isArray(value)) return value.map((v) => applyDeep(v)) as unknown as T;
     if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.applyDeep(v)])) as T;
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, applyDeep(v)])) as T;
     }
     return value;
   }
 
   /** High-entropy tokens no rule matched. Highlight-only: never altered automatically. */
-  suspicious(text: string): string[] {
-    const spans = this.candidates(text);
+  function suspicious(text: string): string[] {
+    const spans = candidates(text);
     const found = new Set<string>();
     for (const m of text.matchAll(/[A-Za-z0-9_+-]{24,}={0,2}/g)) {
       const tok = m[0];
@@ -186,4 +199,6 @@ export class Redactor {
     }
     return [...found];
   }
+
+  return { addLiteral, setRestored, segments, apply, findings, applyDeep, suspicious };
 }

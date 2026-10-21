@@ -1,5 +1,5 @@
 import { convertTimeline, type ConvertOptions, type TimelineEntry } from "../shared/core/capture/convert";
-import { Redactor, type Segment } from "../shared/core/capture/redact";
+import { createRedactor, type Redactor, type Segment } from "../shared/core/capture/redact";
 import type { Reply, Script } from "../shared/core/schema";
 
 export interface ReviewModel {
@@ -30,7 +30,7 @@ export function buildReview(entries: readonly TimelineEntry[], options: ConvertO
     name: options.name,
     options,
     script: convertTimeline(entries, options),
-    redactor: new Redactor(undefined, { cwd: ctx.cwd ?? undefined }),
+    redactor: createRedactor(undefined, { cwd: ctx.cwd ?? undefined }),
     confirmed: new Set(),
   };
 }

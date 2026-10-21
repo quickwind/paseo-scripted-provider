@@ -38,6 +38,9 @@ npm run verify:package
 # Verify the client bundle stays free of the YAML parser
 npm run check:client-bundle
 
+# Verify the client bundle compiles with Hermes (the engine of the Paseo iOS app)
+npm run check:hermes
+
 # End-to-end test against the published package on the npm registry
 npm run e2e:npm
 
@@ -70,3 +73,10 @@ npm run vendor:yaml
    - Script parsing and serialization live on the server side (`scripted.export`, `scripted.merge-scenario` RPCs).
    - The client bundle must never contain `shared/vendor/yaml.js`: it is evaluated by Hermes on iOS, where the
      minified parser broke the mobile app. `npm run check:client-bundle` enforces this.
+
+6. **The Client Bundle Must Compile with Hermes**:
+   - The Paseo iOS app evaluates the plugin's client bundle with Hermes, which has **no classes and no async
+     arrow functions** (esbuild emits `var X = class {}` for every class it bundles).
+   - Use plain functions and `async function` expressions in anything reachable from `index.client.tsx`.
+   - `npm run check:hermes` compiles the bundle with the Hermes compiler from `react-native` and fails the build
+     if the mobile engine cannot load it.

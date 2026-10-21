@@ -10,6 +10,14 @@ updates:
         dependency-type: development
         patterns:
           - "*"
+    ignore:
+      # React must match the Paseo plugin SDK's peer range (@getpaseo/plugin wants react@~19.1.0).
+      - dependency-name: "react"
+      - dependency-name: "@types/react"
+      # react-native pins the Hermes compiler that `npm run check:hermes` validates the client
+      # bundle against - the same engine the Paseo iOS app runs. Upgrading it silently changes
+      # what the check proves.
+      - dependency-name: "react-native"
 
   - package-ecosystem: npm
     directory: "/testkit"

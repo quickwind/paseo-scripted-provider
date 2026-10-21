@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Redactor } from "../../shared/core/capture/redact";
+import { createRedactor } from "../../shared/core/capture/redact";
 
 const GH = "ghp_" + "a".repeat(36);
 const SK = "sk-" + "b".repeat(40);
@@ -27,41 +27,41 @@ describe("default rules", () => {
   };
   for (const [name, text] of Object.entries(corpus)) {
     it(`redacts ${name} and no secret survives`, () => {
-      const out = new Redactor().apply(text);
+      const out = createRedactor().apply(text);
       expect(out).not.toContain(secrets[name]);
       expect(out).toMatch(/\{\{[a-z_]+\d*\}\}/);
     });
   }
   it("replaces only the username segment of home paths", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     expect(r.apply("/Users/alice/proj and /home/bob/x and C:\\Users\\carol\\y")).toBe("/Users/{{user_1}}/proj and /home/{{user_2}}/x and C:\\Users\\{{user_3}}\\y");
   });
   it("replaces the session cwd with {{cwd}}", () => {
-    expect(new Redactor(undefined, { cwd: "/Users/alice/proj" }).apply("cd /Users/alice/proj/src && ls")).toBe("cd {{cwd}}/src && ls");
+    expect(createRedactor(undefined, { cwd: "/Users/alice/proj" }).apply("cd /Users/alice/proj/src && ls")).toBe("cd {{cwd}}/src && ls");
   });
 });
 
 describe("placeholders", () => {
   it("same value gets the same placeholder; different values differ", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     const out = r.apply(`${GH} ${SK} ${GH}`);
     expect(out).toBe("{{secret_1}} {{secret_2}} {{secret_1}}");
   });
   it("overlapping email-with-token: the higher-priority token rule wins, deterministically", () => {
     const text = `contact ${GH}@example.com please`;
-    const out = new Redactor().apply(text);
+    const out = createRedactor().apply(text);
     expect(out).not.toContain(GH);
     expect(out).toBe("contact {{secret_1}}@example.com please");
   });
   it("URL with password and email query keeps structure", () => {
-    const out = new Redactor().apply("https://bob:pw123456@host.io/p?e=zed@host.io");
+    const out = createRedactor().apply("https://bob:pw123456@host.io/p?e=zed@host.io");
     expect(out).toBe("https://bob:{{secret_1}}@host.io/p?e={{email_1}}");
   });
 });
 
 describe("restore and literals", () => {
   it("restoring a finding returns the original and round-trips", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     const text = `a ${GH} b`;
     expect(r.apply(text)).toBe("a {{secret_1}} b");
     r.setRestored(GH, true);
@@ -70,13 +70,13 @@ describe("restore and literals", () => {
     expect(r.apply(text)).toBe("a {{secret_1}} b");
   });
   it("addLiteral redacts a user value everywhere, longest first", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     r.addLiteral("acme-corp");
     r.addLiteral("acme");
     expect(r.apply("acme-corp and acme")).toBe("{{redacted_1}} and {{redacted_2}}");
   });
   it("a literal inside a longer secret does not corrupt it", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     r.addLiteral("aaaa");
     expect(r.apply(`x ${GH} y`)).toBe("x {{secret_1}} y");
   });
@@ -84,7 +84,7 @@ describe("restore and literals", () => {
 
 describe("segments, findings, deep", () => {
   it("segments concatenate to apply() and to the original when all restored", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     const text = `u ${GH} v alice@example.org w`;
     expect(r.segments(text).map((s) => s.text).join("")).toBe(r.apply(text));
     expect(r.segments(text).filter((s) => s.finding)).toHaveLength(2);
@@ -93,12 +93,12 @@ describe("segments, findings, deep", () => {
     expect(r.segments(text).map((s) => s.text).join("")).toBe(text);
   });
   it("findings are listed in first-appearance order", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     r.apply(`${SK} then ${GH}`);
     expect(r.findings().map((f) => f.original)).toEqual([SK, GH]);
   });
   it("applyDeep maps strings in nested structures and leaves other values", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     const v = { a: [GH, 1, true, null], b: { c: `x ${SK}` }, n: 5 };
     expect(r.applyDeep(v)).toEqual({ a: ["{{secret_1}}", 1, true, null], b: { c: "x {{secret_2}}" }, n: 5 });
     expect(v.a[0]).toBe(GH);
@@ -107,38 +107,38 @@ describe("segments, findings, deep", () => {
 
 describe("suspicious", () => {
   it("flags a random token but not a UUID, a sha1 or plain words", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     expect(r.suspicious(`val ${RAND} end`)).toEqual([RAND]);
     expect(r.suspicious("id 123e4567-e89b-12d3-a456-426614174000")).toEqual([]);
     expect(r.suspicious("sha da39a3ee5e6b4b0d3255bfef95601890afd80709")).toEqual([]);
     expect(r.suspicious("just some ordinary sentence of words here")).toEqual([]);
   });
   it("does not flag text already matched by a rule", () => {
-    expect(new Redactor().suspicious(GH)).toEqual([]);
+    expect(createRedactor().suspicious(GH)).toEqual([]);
   });
 });
 
 describe("leak fixes (final review)", () => {
   it("cwd followed by sentence punctuation is still redacted (regression found by the real-provider run)", () => {
-    const r = new Redactor(undefined, { cwd: "/work/opencode" });
+    const r = createRedactor(undefined, { cwd: "/work/opencode" });
     expect(r.apply("The current directory is /work/opencode.")).toBe("The current directory is {{cwd}}.");
     expect(r.apply("(/work/opencode), '/work/opencode'; /work/opencode:")).toBe("({{cwd}}), '{{cwd}}'; {{cwd}}:");
     expect(r.apply("/work/opencode.bak and /work/opencode-2")).toBe("/work/opencode.bak and /work/opencode-2");
   });
   it("a shorter high-priority match does not leave the tail of an overlapping secret", () => {
     const secret = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r+SECRETTAIL/xyz=";
-    const out = new Redactor().apply(`Authorization: Bearer ${secret}`);
+    const out = createRedactor().apply(`Authorization: Bearer ${secret}`);
     expect(out).not.toContain("SECRETTAIL");
     expect(out).not.toContain("dBjftJeZ");
   });
   it("cwd only matches at a path boundary", () => {
-    expect(new Redactor(undefined, { cwd: "/home/al" }).apply("/home/alice/proj and /home/al/x")).toBe("/home/{{user_1}}/proj and {{cwd}}/x");
+    expect(createRedactor(undefined, { cwd: "/home/al" }).apply("/home/alice/proj and /home/al/x")).toBe("/home/{{user_1}}/proj and {{cwd}}/x");
   });
 });
 
 describe("fewer false alarms (user report: 44 suspicious items)", () => {
   it("does not flag file names, dates, tool ids or hyphenated words", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     for (const text of [
       "see 2026-10-16-paseo-scripted-provider-design.md for details",
       "docs/specs/2026-10-16-scripted-provider.md",
@@ -151,14 +151,14 @@ describe("fewer false alarms (user report: 44 suspicious items)", () => {
     }
   });
   it("still flags random-looking secrets with separators", () => {
-    expect(new Redactor().suspicious("pw=aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY")).toEqual(["aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY"]);
-    expect(new Redactor().suspicious("k=Zq8XrT2mKp7-LwR4vB8nT1yH6cD0sFgUa")).toHaveLength(1);
+    expect(createRedactor().suspicious("pw=aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY")).toEqual(["aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY"]);
+    expect(createRedactor().suspicious("k=Zq8XrT2mKp7-LwR4vB8nT1yH6cD0sFgUa")).toHaveLength(1);
   });
 });
 
 describe("email placeholder", () => {
   it("emails get {{email_N}} like every other kind; same address, same number; restore brings the original back", () => {
-    const r = new Redactor();
+    const r = createRedactor();
     const text = "from alice@example.org to bob@corp.io, cc alice@example.org";
     expect(r.apply(text)).toBe("from {{email_1}} to {{email_2}}, cc {{email_1}}");
     r.setRestored("alice@example.org", true);

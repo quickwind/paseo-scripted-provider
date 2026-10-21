@@ -46,6 +46,7 @@ jobs:
           npm test
           npm run verify:package
           npm run check:client-bundle
+          npm run check:hermes
 
       # Authentication is the workflow's OIDC identity (npm trusted publishing), no token needed.
       # Provenance is generated automatically for trusted publishers of public packages.
