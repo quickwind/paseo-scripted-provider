@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { coverageBadge, testsBadge } from "../../scripts/make-badges.mjs";
-import { pushUrl } from "../../scripts/publish-badges.mjs";
+import { authArgs } from "../../scripts/publish-badges.mjs";
 
 describe("coverageBadge", () => {
   it.each([
@@ -31,12 +31,17 @@ describe("testsBadge", () => {
   });
 });
 
-describe("pushUrl", () => {
-  it("embeds the token for github.com remotes so the push is authenticated (I7)", () => {
-    expect(pushUrl("https://github.com/quickwind/x.git", { GITHUB_TOKEN: "tok" })).toBe("https://x-access-token:tok@github.com/quickwind/x.git");
+describe("authArgs", () => {
+  it("passes the token as an Authorization header, never inside the remote url", () => {
+    const args = authArgs({ GITHUB_TOKEN: "tok" });
+    expect(args).toHaveLength(2);
+    expect(args[0]).toBe("-c");
+    expect(args[1]).toContain("http.extraheader=AUTHORIZATION: basic ");
+    expect(args[1]).not.toContain("tok");
+    expect(Buffer.from(args[1].split("basic ")[1], "base64").toString()).toBe("x-access-token:tok");
   });
-  it("leaves the url alone without a token or for other hosts", () => {
-    expect(pushUrl("https://github.com/q/x.git", {})).toBe("https://github.com/q/x.git");
-    expect(pushUrl("git@github.com:q/x.git", { GITHUB_TOKEN: "t" })).toBe("git@github.com:q/x.git");
+  it("adds no arguments without a token", () => {
+    expect(authArgs({})).toEqual([]);
+    expect(authArgs(undefined)).toEqual([]);
   });
 });
