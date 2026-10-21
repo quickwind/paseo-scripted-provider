@@ -44,6 +44,7 @@ jobs:
         run: |
           npm run typecheck
           npm test
+          npm run verify:package
 
       # Authentication is the workflow's OIDC identity (npm trusted publishing), no token needed.
       # Provenance is generated automatically for trusted publishers of public packages.
@@ -52,3 +53,11 @@ jobs:
 
       - name: Publish paseo-scripted-provider-testkit
         run: npm publish ./testkit --access public
+
+      - name: Verify the published package in a real daemon
+        # The only check that proves the tarball a user installs works: install it from the
+        # registry into an isolated daemon and run a scenario.
+        run: npm run e2e:npm
+        env:
+          E2E_NPM_VERSION: ${{ github.event.release.tag_name }}
+          E2E_OUT: ${{ runner.temp }}/e2e-logs

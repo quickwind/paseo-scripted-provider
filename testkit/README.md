@@ -17,7 +17,7 @@ Part of [paseo-scripted-provider](https://github.com/quickwind/paseo-scripted-pr
 npm install -D paseo-scripted-provider-testkit
 ```
 
-Requires Node.js `>= 22` and Paseo `>= 0.11.0 < 0.12.0`.
+Requires Node.js `>= 22` and Paseo `>= 0.11.0 < 0.13.0`.
 
 ## Quick Example
 

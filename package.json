@@ -1,6 +1,6 @@
 {
   "name": "paseo-scripted-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paseo plugin: a scripted (model-free) agent provider with session-to-script recording.",
   "license": "MIT",
   "author": "quickwind",
@@ -29,12 +29,14 @@
     "test:integration": "vitest run test/integration",
     "test:coverage": "vitest run --coverage",
     "e2e": "node --test --test-timeout=300000 \"e2e/*.test.mjs\"",
+    "e2e:npm": "node --test --test-timeout=300000 e2e/npm-install.e2e.mjs",
+    "verify:package": "node scripts/verify-package.mjs && node scripts/verify-package.mjs testkit",
     "vendor:yaml": "node scripts/vendor-yaml.mjs",
     "verify:real": "vitest run --config vitest.real.config.ts"
   },
   "devDependencies": {
-    "@getpaseo/client": "^0.11.2",
-    "@getpaseo/plugin": "^0.11.2",
+    "@getpaseo/client": ">=0.11.2",
+    "@getpaseo/plugin": ">=0.11.2",
     "@types/node": "^22.20.4",
     "@types/react": "~19.2.0",
     "@vitest/coverage-v8": "^4.1.11",

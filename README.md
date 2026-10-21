@@ -2,6 +2,7 @@
 [![tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Ftests.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fquickwind%2Fpaseo-scripted-provider%2Fbadges%2Fcoverage.json)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/ci.yml)
 [![Snyk](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml/badge.svg)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml)
+[![npm](https://img.shields.io/npm/v/paseo-scripted-provider)](https://www.npmjs.com/package/paseo-scripted-provider)
 [![license: MIT](https://img.shields.io/github/license/quickwind/paseo-scripted-provider)](LICENSE)
 [![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0%20%3C0.13-blue)](#compatibility)
 
@@ -22,13 +23,15 @@ Requires Paseo `>=0.11.0 <0.13.0` (tested on 0.11.x and 0.12.x) and plugins enab
 Install the plugin via the Paseo CLI:
 
 ```bash
-# Install published plugin
-paseo plugin install paseo-scripted-provider
+# Install the published plugin from the npm registry
+paseo plugin install npm:paseo-scripted-provider
 
 # Or install from source
 git clone https://github.com/quickwind/paseo-scripted-provider
 paseo plugin install ./paseo-scripted-provider
 ```
+
+The `npm:` prefix tells the CLI the source is an npm package; the bare name works too, but the prefix is unambiguous. The published package and the GitHub release carry the same version.
 
 The daemon compiles the plugin itself; there is nothing to build.
 
@@ -180,9 +183,10 @@ It picks a free port, uses a temp `--home` plus fake `HOME`/`USERPROFILE`, disab
 | Paseo | Status |
 |---|---|
 | 0.11.x, 0.12.x (tested on 0.11.4 and 0.12.0) | supported |
+| newer versions | allowed by the version range, not guaranteed |
 | other | not tested |
 
-The provider protocol is an internal Paseo interface and may change between versions. CI runs the real-daemon e2e on Ubuntu, macOS and Windows against the pinned Paseo version.
+The provider protocol is an internal Paseo interface and may change between versions. CI runs the real-daemon e2e on Ubuntu, macOS and Windows against the pinned Paseo version (0.12.0).
 
 Plugin layout follows the daemon's rules: `server/` (Node-only code), `shared/` (platform-neutral, also bundled for the client), `client/`.
 

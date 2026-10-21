@@ -14,6 +14,9 @@ import { Daemon, Workspace, freePort, sleep } from "./daemon.mjs";
 
 export { Daemon, Workspace, freePort, sleep };
 
+/** The published plugin package; `pluginSource: "npm"` installs this from the registry. */
+export const NPM_PACKAGE = "paseo-scripted-provider";
+
 export function readJsonl(file) {
   if (!fs.existsSync(file)) return [];
   return fs
@@ -34,7 +37,7 @@ export async function connectClient(daemon) {
     url: `ws://${daemon.host}/ws`,
     clientId: `testkit-${randomUUID()}`,
     clientType: "cli",
-    appVersion: "0.11.4",
+    appVersion: "0.12.0",
     localCredential: () => readLocalCredentialForTarget(daemon.ws.paseoHome, daemon.host) ?? undefined,
     connectTimeoutMs: 30000,
     webSocketFactory: (url, config) => new WebSocket(url, config?.protocols, { headers: config?.headers }),
@@ -44,7 +47,7 @@ export async function connectClient(daemon) {
   return { client, api: createPaseoApi(client) };
 }
 
-export async function startScriptedEnv({ script, enableProviders = [], timeScale = Number(process.env.E2E_TIME_SCALE ?? 1), keep = false, realHome = false, providerConfigs = {} } = {}) {
+export async function startScriptedEnv({ script, enableProviders = [], timeScale = Number(process.env.E2E_TIME_SCALE ?? 1), keep = false, realHome = false, providerConfigs = {}, pluginSource = "local", pluginVersion = "" } = {}) {
   const ws = new Workspace({ keep, realHome });
   const daemon = new Daemon(ws, { port: await freePort(), timeScale, enableProviders, providerConfigs });
   process.once("exit", () => daemon.killNow());
@@ -52,9 +55,11 @@ export async function startScriptedEnv({ script, enableProviders = [], timeScale
 
   let conn;
   try {
-    const pluginDir = ws.stagePlugin();
+    // "local" installs the plugin from this working copy; "npm" installs the published package
+    // from the registry, which is how a user installs it.
+    const source = pluginSource === "npm" ? `npm:${NPM_PACKAGE}${pluginVersion ? `@${pluginVersion}` : ""}` : ws.stagePlugin();
     await daemon.start("daemon");
-    daemon.cli(["plugin", "install", pluginDir, "--json"], { timeoutMs: 120000 * timeScale });
+    daemon.cli(["plugin", "install", source, "--json"], { timeoutMs: 180000 * timeScale });
     const listed = JSON.parse(daemon.cli(["plugin", "ls", "--json"]).stdout);
     const me = listed.find((p) => p.id === "paseo-scripted-provider");
     if (me?.status !== "running") throw new Error(`plugin not running: ${JSON.stringify(me ?? listed)}`);

@@ -29,8 +29,14 @@ npm run typecheck
 # Unit and integration tests (Vitest)
 npm test
 
-# Test coverage (enforces >= 85% line coverage)
+# Test coverage (enforces >= 90% line coverage)
 npm run test:coverage
+
+# Verify what would be published to npm (file list of the tarball)
+npm run verify:package
+
+# End-to-end test against the published package on the npm registry
+npm run e2e:npm
 
 # Real-daemon E2E tests (requires testkit dependencies installed)
 npm ci --prefix testkit && npm run e2e

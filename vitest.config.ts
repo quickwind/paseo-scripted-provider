@@ -9,7 +9,7 @@ export default defineConfig({
       include: ["shared/core/**", "server/**"],
       reporter: ["text", "lcov", "json-summary", "html"],
       reportsDirectory: "reports/coverage",
-      thresholds: { lines: 85 },
+      thresholds: { lines: 90 },
     },
   },
 });
