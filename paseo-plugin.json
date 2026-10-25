@@ -2,5 +2,5 @@
   "id": "paseo-scripted-provider",
   "name": "Scripted Provider",
   "description": "A Paseo agent backend that replies from a script instead of a model. Deterministic testing, plus record-a-session-as-a-script.",
-  "requirements": { "paseo": ">=0.11.0 <0.13.0" }
+  "requirements": { "paseo": ">=0.11.0" }
 }

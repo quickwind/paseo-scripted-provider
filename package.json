@@ -1,6 +1,6 @@
 {
   "name": "paseo-scripted-provider",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Paseo plugin: a scripted (model-free) agent provider with session-to-script recording.",
   "license": "MIT",
   "author": "quickwind",
