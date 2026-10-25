@@ -7,6 +7,7 @@ import type { ConvertOptions, TimelineEntry } from "../shared/core/capture/conve
 import { safeScenarioName, scriptFilename, type ScriptFormat } from "../shared/core/capture/script-format";
 import { captureRpc, exportScriptRpc, mergeScenarioRpc, scriptedSettings } from "../shared/rpc";
 import { buildReview, canExport, confirmSuspicious, editStep, exportScript, pendingConfirms, redactSelection, resolveAll, restoreFinding, reviewItems, stepsView, type EditField, type ReviewItem, type ReviewModel } from "./state";
+import { useT } from "./i18n";
 import { highlight, LEGEND, type HighlightState } from "./palette";
 import { canDownload, downloadFile } from "./web";
 
@@ -20,6 +21,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   const agentId = params.agentId ?? "";
   const workspaceId = params.workspaceId ?? "";
   const { colors } = theme;
+  const t = useT();
   const capture = useRpc(captureRpc);
   const exportScriptRpcCall = useRpc(exportScriptRpc);
   const mergeScenarioRpcCall = useRpc(mergeScenarioRpc);
@@ -111,7 +113,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     setModel(resolveAll(model, how));
     setActiveKey(null);
     rerender();
-    toast.show(how === "redact" ? `Redacted ${pending} item(s)` : `Kept ${pending} item(s) as they are`);
+    toast.show(how === "redact" ? t("record.redactedItems", { count: pending }) : t("record.keptItems", { count: pending }));
   };
 
   // Async function expressions, not async arrows: the mobile app's engine has no async arrow functions.
@@ -133,7 +135,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
       setActiveKey(null);
       setTab("confirm");
     } catch (e) {
-      toast.error(`Could not read the session: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(t("record.readFailed", { error: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
@@ -146,21 +148,21 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
       // The daemon owns the YAML parser, so the client bundle never ships it.
       text = (await exportScriptRpcCall({ script: exportScript(model), format })).text;
     } catch (e) {
-      toast.error(`Could not serialize the script: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(t("record.serializeFailed", { error: e instanceof Error ? e.message : String(e) }));
       return;
     }
     if (canDownload) {
       downloadFile(scriptFilename(model.name, new Date(), format), text, format === "yaml" ? "application/yaml;charset=utf-8" : undefined);
-      toast.show("Script downloaded");
+      toast.show(t("record.downloaded"));
     } else {
       await copyText(text);
-      toast.show("Script copied to the clipboard — paste it into a file to keep it");
+      toast.show(t("record.copied"));
     }
   };
 
   const doReplay = async function doReplay() {
     if (!model || !canExport(model)) return;
-    if (settings.status !== "ready") return toast.error("Settings are not loaded yet; try again in a moment");
+    if (settings.status !== "ready") return toast.error(t("record.settingsNotLoaded"));
     let merged: { ok: boolean; text?: string; name?: string; error?: string };
     try {
       merged = await mergeScenarioRpcCall({
@@ -169,21 +171,21 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
         existingText: settings.values.scripts,
       });
     } catch (e) {
-      toast.error(`Could not build the script: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(t("record.buildFailed", { error: e instanceof Error ? e.message : String(e) }));
       return;
     }
-    if (!merged.ok || !merged.text || !merged.name) return toast.error(`Existing script is invalid: ${merged.error ?? "unknown error"}`);
-    if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error("Could not save the script");
+    if (!merged.ok || !merged.text || !merged.name) return toast.error(t("record.existingInvalid", { error: merged.error ?? t("record.unknownError") }));
+    if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error(t("record.saveFailed"));
     try {
-      const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: `Replay: ${merged.name}` };
+      const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: t("record.replayTitle", { name: merged.name }) };
       // Create inside the recorded conversation's workspace; a bare cwd would make the host open a new workspace.
       const created = workspaceId
         ? await paseo.workspaces.ref(workspaceId).agents.create(agentOptions)
         : await paseo.agents.create({ cwd: cwd ?? ".", ...agentOptions });
-      toast.show(`Replay agent created (${merged.name}). Send the same messages and it answers by content.`);
+      toast.show(t("record.replayCreated", { name: merged.name }));
       navigation?.openAgent({ agentId: created.id });
     } catch (e) {
-      toast.error(`Script saved as "${merged.name}", but creating the agent failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(t("record.replayAgentFailed", { name: merged.name, error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -207,7 +209,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   if (!agentId) {
     return (
       <View style={styles.page}>
-        <Text style={{ color: colors.foreground }}>Open this from a conversation: use the "Record as script" button next to the message box.</Text>
+        <Text style={{ color: colors.foreground }}>{t("record.openFromConversation")}</Text>
       </View>
     );
   }
@@ -216,23 +218,23 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     return (
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.setup}>
-          <Text style={[styles.title, { color: colors.foreground }]}>Record this conversation as a script</Text>
-          <Text style={{ color: colors.foregroundMuted }}>The script can be replayed on a Scripted agent. Secrets are replaced before anything is exported; you review every change first.</Text>
-          {field("Script name", name, setName)}
-          {field("Only the last N turns (blank = all)", lastTurns, setLastTurns, "e.g. 3")}
-          <Text style={{ color: colors.foreground }}>Delays</Text>
+          <Text style={[styles.title, { color: colors.foreground }]}>{t("record.setupTitle")}</Text>
+          <Text style={{ color: colors.foregroundMuted }}>{t("record.setupIntro")}</Text>
+          {field(t("record.scriptName"), name, setName)}
+          {field(t("record.lastTurns"), lastTurns, setLastTurns, t("record.lastTurnsPlaceholder"))}
+          <Text style={{ color: colors.foreground }}>{t("record.delays")}</Text>
           <View style={styles.row}>
-            {chip("Keep", delay === "keep", () => setDelay("keep"))}
-            {chip("Scale", delay === "scale", () => setDelay("scale"))}
-            {chip("Remove", delay === "drop", () => setDelay("drop"))}
+            {chip(t("record.delayKeep"), delay === "keep", () => setDelay("keep"))}
+            {chip(t("record.delayScale"), delay === "scale", () => setDelay("scale"))}
+            {chip(t("record.delayRemove"), delay === "drop", () => setDelay("drop"))}
           </View>
-          {delay === "scale" ? field("Scale factor", factor, setFactor) : null}
+          {delay === "scale" ? field(t("record.scaleFactor"), factor, setFactor) : null}
           <View style={styles.row}>
-            {chip(reasoning ? "Reasoning: included" : "Reasoning: skipped", reasoning, () => setReasoning(!reasoning))}
-            {chip(toolOutput ? "Tool output: included" : "Tool output: skipped", toolOutput, () => setToolOutput(!toolOutput))}
+            {chip(reasoning ? t("record.reasoningOn") : t("record.reasoningOff"), reasoning, () => setReasoning(!reasoning))}
+            {chip(toolOutput ? t("record.toolOutputOn") : t("record.toolOutputOff"), toolOutput, () => setToolOutput(!toolOutput))}
           </View>
-          {field("Truncate long text at N characters (blank = never)", truncate, setTruncate)}
-          {btn(busy ? "Reading…" : "Preview & redact", () => void preview(), { disabled: busy, primary: true })}
+          {field(t("record.truncate"), truncate, setTruncate)}
+          {btn(busy ? t("record.reading") : t("record.preview"), () => void preview(), { disabled: busy, primary: true })}
         </View>
       </ScrollView>
     );
@@ -268,9 +270,9 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     return (
       <Pressable key={item.key} onPress={() => locate(item)} style={[styles.itemRow, { borderColor: item.key === activeKey ? c.bg : colors.border, borderWidth: item.key === activeKey ? 2 : 1, backgroundColor: colors.surface1 }]}>
         <Text style={{ color: colors.foreground }} numberOfLines={1}>
-          <Text style={{ backgroundColor: c.bg, color: c.fg }}> {item.kind === "confirm" ? (item.done ? "kept" : "check") : item.restored ? "restored" : "replaced"} </Text> {item.display}
+          <Text style={{ backgroundColor: c.bg, color: c.fg }}> {t(`record.state.${item.kind === "confirm" ? (item.done ? "kept" : "pending") : item.restored ? "restored" : "replaced"}`)} </Text> {item.display}
         </Text>
-        <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>Step {item.step + 1}</Text>
+        <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{t("record.step", { step: item.step + 1 })}</Text>
       </Pressable>
     );
   };
@@ -279,54 +281,54 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     <View ref={rootRef} collapsable={false} style={styles.reviewPage}>
       <View style={styles.row}>
         <View style={{ flex: 1, minWidth: 220 }}>
-          <Text style={[styles.title, { color: colors.foreground }]}>Review "{model.name}"</Text>
+          <Text style={[styles.title, { color: colors.foreground }]}>{t("record.reviewTitle", { name: model.name })}</Text>
           <Text style={{ color: colors.statusWarning, fontSize: 12 }}>
-            Redaction is best-effort and cannot guarantee that nothing sensitive remains. Review every step before sharing or committing the file. Nothing is uploaded.
+            {t("record.redactionWarning")}
           </Text>
         </View>
-        {btn("Back", () => setModel(null))}
+        {btn(t("record.back"), () => setModel(null))}
         {/* Split button: the main part exports, the small arrow picks the format (YAML by default). */}
         <View style={{ flexDirection: "row" }}>
           <Pressable disabled={pending > 0} onPress={() => void doExport()} style={[styles.splitMain, { borderColor: colors.border, backgroundColor: colors.accent, opacity: pending > 0 ? 0.4 : 1 }]}>
-            <Text style={{ color: colors.accentForeground }}>{canDownload ? `Download .${format}` : `Copy ${format.toUpperCase()}`}</Text>
+            <Text style={{ color: colors.accentForeground }}>{canDownload ? t("record.download", { format }) : t("record.copy", { format: format.toUpperCase() })}</Text>
           </Pressable>
           <View ref={arrowRef} collapsable={false}>
-            <Pressable accessibilityLabel="Choose the export format" onPress={toggleFormatMenu} style={[styles.splitArrow, { borderColor: colors.border, backgroundColor: colors.accent }]}>
+            <Pressable accessibilityLabel={t("record.chooseFormat")} onPress={toggleFormatMenu} style={[styles.splitArrow, { borderColor: colors.border, backgroundColor: colors.accent }]}>
               <Text style={{ color: colors.accentForeground }}>▾</Text>
             </Pressable>
           </View>
         </View>
-        {btn("Replay now", () => void doReplay(), { disabled: pending > 0 })}
+        {btn(t("record.replayNow"), () => void doReplay(), { disabled: pending > 0 })}
       </View>
 
       <View style={[styles.row, { marginTop: 8 }]}>
-        {chip(`To confirm (${confirms.filter((i) => !i.done).length}/${confirms.length})`, tab === "confirm", () => setTab("confirm"))}
-        {chip(`Replaced (${replaced.length})`, tab === "replaced", () => setTab("replaced"))}
-        {btn("◀ Previous", () => go(-1), { disabled: list.length === 0 })}
-        <Text style={{ color: colors.foreground }}>{list.length === 0 ? "none" : `${activeIndex < 0 ? "–" : activeIndex + 1} / ${list.length}`}</Text>
-        {btn("Next ▶", () => go(1), { disabled: list.length === 0 })}
+        {chip(t("record.toConfirm", { open: confirms.filter((i) => !i.done).length, total: confirms.length }), tab === "confirm", () => setTab("confirm"))}
+        {chip(t("record.replaced", { count: replaced.length }), tab === "replaced", () => setTab("replaced"))}
+        {btn(t("record.previous"), () => go(-1), { disabled: list.length === 0 })}
+        <Text style={{ color: colors.foreground }}>{list.length === 0 ? t("record.none") : `${activeIndex < 0 ? "–" : activeIndex + 1} / ${list.length}`}</Text>
+        {btn(t("record.next"), () => go(1), { disabled: list.length === 0 })}
         {active?.kind === "confirm" ? (
           <>
-            {btn("Redact", () => resolve(active, "redact"), { primary: true })}
-            {btn("Keep as is", () => resolve(active, "keep"))}
+            {btn(t("record.redact"), () => resolve(active, "redact"), { primary: true })}
+            {btn(t("record.keepAsIs"), () => resolve(active, "keep"))}
           </>
         ) : null}
-        {btn(`Redact all (${pending})`, () => decideAll("redact"), { disabled: pending === 0, primary: pending > 0 && !active })}
-        {btn(armKeepAll ? `Tap again to keep all ${pending} as is` : `Keep all as is (${pending})`, () => decideAll("keep"), { disabled: pending === 0 })}
-        {active?.kind === "replaced" ? btn(active.restored ? "Redact again" : "Restore original", () => { restoreFinding(model, active.value, !active.restored); rerender(); }) : null}
+        {btn(t("record.redactAll", { count: pending }), () => decideAll("redact"), { disabled: pending === 0, primary: pending > 0 && !active })}
+        {btn(armKeepAll ? t("record.keepAllConfirm", { count: pending }) : t("record.keepAll", { count: pending }), () => decideAll("keep"), { disabled: pending === 0 })}
+        {active?.kind === "replaced" ? btn(active.restored ? t("record.redactAgain") : t("record.restoreOriginal"), () => { restoreFinding(model, active.value, !active.restored); rerender(); }) : null}
       </View>
-      {pending === 0 ? <Text style={{ color: colors.statusSuccess, marginTop: 4 }}>Nothing left to confirm. You can export.</Text> : <Text style={{ color: colors.statusWarning, marginTop: 4 }}>{pending} item(s) must be confirmed (Redact or Keep) before export.</Text>}
+      {pending === 0 ? <Text style={{ color: colors.statusSuccess, marginTop: 4 }}>{t("record.nothingToConfirm")}</Text> : <Text style={{ color: colors.statusWarning, marginTop: 4 }}>{t("record.mustConfirm", { count: pending })}</Text>}
 
       <View style={[styles.row, { marginTop: 6 }]}>
         {LEGEND.map((l) => (
           <Text key={l.state} style={{ fontSize: 11, color: colors.foregroundMuted }}>
-            <Text style={{ backgroundColor: highlight(l.state).bg, color: highlight(l.state).fg }}> {l.state} </Text> {l.text}
+            <Text style={{ backgroundColor: highlight(l.state).bg, color: highlight(l.state).fg }}> {t(`record.state.${l.state}`)} </Text> {t(`record.legend.${l.state}`)}
           </Text>
         ))}
       </View>
       {active ? (
         <Text style={{ marginTop: 6, color: highlight("active").fg, backgroundColor: highlight("active").bg, padding: 6, borderRadius: 6 }}>
-          Selected: step {active.step + 1} · {active.kind === "confirm" ? "looks like a secret" : "replaced value"} · {active.display}
+          {t("record.selected", { step: active.step + 1, kind: active.kind === "confirm" ? t("record.kindSecret") : t("record.kindReplaced"), display: active.display })}
         </Text>
       ) : null}
 
@@ -334,7 +336,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
         <ScrollView ref={scroller} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }}>
           {views.map((step) => (
             <View key={step.index} onLayout={(e) => { stepY.current[step.index] = e.nativeEvent.layout.y; }} style={[styles.step, { borderColor: colors.border }]}>
-              <Text style={{ color: colors.foregroundMuted }}>Step {step.index + 1}</Text>
+              <Text style={{ color: colors.foregroundMuted }}>{t("record.step", { step: step.index + 1 })}</Text>
               {step.parts.map((p, pi) => {
                 const isEditing = editing && editing.index === step.index && editing.field === p.field;
                 const isActive = active && active.step === step.index && active.part === pi;
@@ -345,9 +347,9 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
                       <View style={styles.col}>
                         <TextInput multiline value={editing.text} onChangeText={(t) => setEditing((cur) => (cur ? { ...cur, text: t } : cur))} onSelectionChange={(e) => { const { start, end } = e.nativeEvent.selection; setEditing((cur) => (cur ? { ...cur, sel: cur.text.slice(start, end) } : cur)); }} style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface1 }]} />
                         <View style={styles.row}>
-                          {btn("Redact selection", () => { if (editing.sel) { redactSelection(model, editing.sel); rerender(); } }, { disabled: !editing.sel })}
-                          {btn("Save", () => { setModel(editStep(model, step.index, editing.field, editing.text)); setEditing(null); }, { primary: true })}
-                          {btn("Cancel", () => setEditing(null))}
+                          {btn(t("record.redactSelection"), () => { if (editing.sel) { redactSelection(model, editing.sel); rerender(); } }, { disabled: !editing.sel })}
+                          {btn(t("settings.save"), () => { setModel(editStep(model, step.index, editing.field, editing.text)); setEditing(null); }, { primary: true })}
+                          {btn(t("record.cancel"), () => setEditing(null))}
                         </View>
                       </View>
                     ) : (
@@ -361,7 +363,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
                         )}
                       </Text>
                     )}
-                    {p.field && !isEditing ? btn("Edit", () => setEditing({ index: step.index, field: p.field!, text: p.raw, sel: "" })) : null}
+                    {p.field && !isEditing ? btn(t("record.edit"), () => setEditing({ index: step.index, field: p.field!, text: p.raw, sel: "" })) : null}
                   </View>
                 );
               })}
@@ -370,14 +372,14 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
         </ScrollView>
 
         <View style={[styles.side, wide ? { width: 300 } : { maxHeight: 170 }, { borderColor: colors.border }]}>
-          <Text style={{ color: colors.foregroundMuted, fontSize: 12, marginBottom: 4 }}>{tab === "confirm" ? "Items to confirm — tap to jump to them" : "Replaced values — tap to jump to them"}</Text>
-          <ScrollView>{list.length === 0 ? <Text style={{ color: colors.foregroundMuted }}>Nothing here.</Text> : list.map(itemRow)}</ScrollView>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, marginBottom: 4 }}>{tab === "confirm" ? t("record.itemsToConfirm") : t("record.replacedValues")}</Text>
+          <ScrollView>{list.length === 0 ? <Text style={{ color: colors.foregroundMuted }}>{t("record.nothingHere")}</Text> : list.map(itemRow)}</ScrollView>
         </View>
       </View>
 
       {menuPos ? (
         <>
-          <Pressable accessibilityLabel="Close the format menu" onPress={() => setMenuPos(null)} style={[StyleSheet.absoluteFill, { zIndex: 999 }]} />
+          <Pressable accessibilityLabel={t("record.closeFormatMenu")} onPress={() => setMenuPos(null)} style={[StyleSheet.absoluteFill, { zIndex: 999 }]} />
           <View style={[styles.menu, { left: menuPos.left, top: menuPos.top, width: MENU_WIDTH, borderColor: colors.border, backgroundColor: colors.surface1 }]}>
             {(["yaml", "json"] as const).map((f) => (
               <Pressable key={f} onPress={() => { setFormat(f); setMenuPos(null); }} style={[styles.menuItem, f === format ? { backgroundColor: colors.surface2 } : null]}>

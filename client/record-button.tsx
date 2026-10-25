@@ -1,4 +1,5 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { label } from "./i18n";
 import { createAgentRegistry } from "./agent-registry";
 
 /**
@@ -14,9 +15,9 @@ export function contributeRecordButtons(client: PluginClientContext) {
       workspaceId: agent.workspaceId,
       agentId: agent.id,
       button: {
-        title: "Record this conversation as a replayable script (secrets are redacted before export)",
+        title: label("record.buttonTitle"),
         icon: "Clapperboard",
-        label: "Record as script",
+        label: label("record.buttonLabel"),
         behavior: {
           kind: "action",
           onPress: () => client.openScreen({ screenId: "scripted-record", params: { agentId: agent.id, workspaceId: agent.workspaceId } }),

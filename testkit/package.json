@@ -1,6 +1,6 @@
 {
   "name": "paseo-scripted-provider-testkit",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Cross-platform helpers: isolated Paseo daemon, install the Scripted provider, drive agents, read the record.",
   "license": "MIT",
   "author": "quickwind",

@@ -4,7 +4,7 @@
 [![Snyk](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml/badge.svg)](https://github.com/quickwind/paseo-scripted-provider/actions/workflows/security.yml)
 [![npm](https://img.shields.io/npm/v/paseo-scripted-provider)](https://www.npmjs.com/package/paseo-scripted-provider)
 [![license: MIT](https://img.shields.io/github/license/quickwind/paseo-scripted-provider)](LICENSE)
-[![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0%20%3C0.13-blue)](#compatibility)
+[![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0-blue)](#compatibility)
 
 # paseo-scripted-provider
 
@@ -18,7 +18,7 @@ Use it to
 
 ## Install
 
-Requires Paseo `>=0.11.0 <0.13.0` (tested on 0.11.x and 0.12.x) and plugins enabled in the daemon config (`"pluginsEnabled": true` at the top level of `config.json`; without it `paseo plugin install` leaves the plugin disabled).
+Requires Paseo `>=0.11.0` with no upper bound (tested on 0.11.x and 0.12.x; the translated UI (English, 简体中文) needs 0.13 and shows English on older versions) and plugins enabled in the daemon config (`"pluginsEnabled": true` at the top level of `config.json`; without it `paseo plugin install` leaves the plugin disabled).
 
 Install the plugin via the Paseo CLI:
 

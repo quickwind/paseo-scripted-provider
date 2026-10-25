@@ -3,11 +3,13 @@ import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput } from "@getpaseo/plugin/client/react-native";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useT } from "./i18n";
 import { getStatusRpc, readRecordRpc, scriptedSettings } from "../shared/rpc";
 
 const ALIGNMENTS = ["warn", "strict", "ignore"] as const;
 
 export const ScriptedSettingsScreen: React.FC<PluginSurfaceProps> = ({ theme }) => {
+  const t = useT();
   const settings = useSettings(scriptedSettings);
   const status = useRpc(getStatusRpc);
   const readRecord = useRpc(readRecordRpc);
@@ -34,9 +36,9 @@ export const ScriptedSettingsScreen: React.FC<PluginSurfaceProps> = ({ theme }) 
   if (settings.status === "loading" || !draft) {
     return settings.status === "error" || settings.status === "invalid" ? (
       <View style={styles.container}>
-        <Text style={{ color: colors.statusDanger }}>Could not load settings: {settings.error}</Text>
+        <Text style={{ color: colors.statusDanger }}>{t("settings.loadFailed", { error: settings.error ?? "" })}</Text>
         <Pressable onPress={() => void settings.reset()}>
-          <Text style={{ color: colors.accent }}>Reset to defaults</Text>
+          <Text style={{ color: colors.accent }}>{t("settings.resetDefaults")}</Text>
         </Pressable>
       </View>
     ) : (
@@ -69,53 +71,51 @@ export const ScriptedSettingsScreen: React.FC<PluginSurfaceProps> = ({ theme }) 
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={[styles.title, { color: colors.foreground }]}>Scripted provider</Text>
-      <Text style={hint}>
-        Pick the "Scripted" provider when creating an agent and choose a scenario as the model. Send SCENARIO:name in chat to switch.
-      </Text>
+      <Text style={[styles.title, { color: colors.foreground }]}>{t("settings.title")}</Text>
+      <Text style={hint}>{t("settings.intro")}</Text>
 
-      <Text style={label}>Script (YAML or JSON)</Text>
+      <Text style={label}>{t("settings.script")}</Text>
       <TextInput multiline style={[...input, styles.script]} value={draft.scripts} onChangeText={(v) => setDraft({ ...draft, scripts: v })} placeholder={"scenarios:\n  hello:\n    - text: Hi"} autoCapitalize="none" autoCorrect={false} />
-      <Text style={hint}>Leave empty to use only the built-in scenarios. The script is merged over them.</Text>
+      <Text style={hint}>{t("settings.scriptHint")}</Text>
 
-      <Text style={label}>Script file (optional)</Text>
+      <Text style={label}>{t("settings.scriptFile")}</Text>
       <TextInput style={input} value={draft.scriptFile} onChangeText={(v) => setDraft({ ...draft, scriptFile: v })} autoCapitalize="none" autoCorrect={false} />
 
-      <Text style={label}>Received-messages log file (optional)</Text>
+      <Text style={label}>{t("settings.recordFile")}</Text>
       <TextInput style={input} value={draft.recordFile} onChangeText={(v) => setDraft({ ...draft, recordFile: v })} autoCapitalize="none" autoCorrect={false} />
 
-      <Text style={label}>When a replayed prompt differs from the recorded one</Text>
+      <Text style={label}>{t("settings.alignment")}</Text>
       <View style={styles.row}>
         {ALIGNMENTS.map((a) => (
           <Pressable key={a} onPress={() => setDraft({ ...draft, alignment: a })} style={[styles.chip, { borderColor: colors.border, backgroundColor: draft.alignment === a ? colors.accent : colors.surface2 }]}>
-            <Text style={{ color: draft.alignment === a ? colors.accentForeground : colors.foreground }}>{a}</Text>
+            <Text style={{ color: draft.alignment === a ? colors.accentForeground : colors.foreground }}>{t(`settings.alignmentOption.${a}`)}</Text>
           </Pressable>
         ))}
       </View>
 
       {changedElsewhere ? (
         <View style={styles.row}>
-          <Text style={{ color: colors.statusWarning, flex: 1 }}>These settings changed elsewhere (for example by "Replay now"). Saving would overwrite them.</Text>
+          <Text style={{ color: colors.statusWarning, flex: 1 }}>{t("settings.changedElsewhere")}</Text>
           <Pressable onPress={reloadDraft}>
-            <Text style={{ color: colors.accent }}>Reload</Text>
+            <Text style={{ color: colors.accent }}>{t("settings.reload")}</Text>
           </Pressable>
         </View>
       ) : null}
       <Pressable onPress={save} disabled={settings.saving} style={[styles.button, { backgroundColor: colors.accent }]}>
-        <Text style={{ color: colors.accentForeground }}>{settings.saving ? "Saving…" : "Save"}</Text>
+        <Text style={{ color: colors.accentForeground }}>{settings.saving ? t("settings.saving") : t("settings.save")}</Text>
       </Pressable>
       {settings.saveError ? <Text style={{ color: colors.statusDanger }}>{settings.saveError}</Text> : null}
 
-      {info?.error ? <Text style={{ color: colors.statusDanger }}>Script problem (built-ins in use): {info.error}</Text> : null}
-      <Text style={hint}>Scenarios: {info ? info.scenarios.join(", ") : "…"}</Text>
+      {info?.error ? <Text style={{ color: colors.statusDanger }}>{t("settings.scriptProblem", { error: info.error })}</Text> : null}
+      <Text style={hint}>{t("settings.scenarios", { list: info ? info.scenarios.join(", ") : "…" })}</Text>
 
       <View style={styles.row}>
-        <Text style={label}>Received messages</Text>
+        <Text style={label}>{t("settings.received")}</Text>
         <Pressable onPress={refresh}>
-          <Text style={{ color: colors.accent }}>Refresh</Text>
+          <Text style={{ color: colors.accent }}>{t("settings.refresh")}</Text>
         </Pressable>
       </View>
-      {lines.length === 0 ? <Text style={hint}>Nothing recorded yet (set a log file above).</Text> : null}
+      {lines.length === 0 ? <Text style={hint}>{t("settings.nothingRecorded")}</Text> : null}
       {lines.map((l, i) => (
         <Text key={i} style={[styles.mono, { color: colors.foregroundMuted }]}>{l}</Text>
       ))}
