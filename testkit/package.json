@@ -23,9 +23,9 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@getpaseo/cli": "0.12.0",
-    "@getpaseo/client": "0.12.0",
-    "@getpaseo/server": "0.12.0",
+    "@getpaseo/cli": "0.13.0",
+    "@getpaseo/client": "0.13.0",
+    "@getpaseo/server": "0.13.0",
     "tree-kill": "1.2.2",
     "ws": "8.22.0"
   }
