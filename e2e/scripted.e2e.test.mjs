@@ -9,6 +9,18 @@ const SCRIPT = {
     boom: [{ outcome: "failed", error: "scripted failure" }],
     stream: [{ chunks: ["a", "b", "c"], chunkDelayMs: 50 }],
     replay: [{ expect: "alpha", text: "A" }, { expect: "beta", text: "B" }, { expect: "gamma", text: "C" }],
+    perm: [
+      {
+        tools: [
+          {
+            name: "Bash",
+            detail: { type: "shell", command: "rm -rf build" },
+            permission: { title: "Allow rm?", on: { accept: { text: "allowed" }, reject: { text: "denied: {{permission.message}}" } } },
+          },
+        ],
+        text: "after",
+      },
+    ],
     tools: [{ tools: [{ name: "Bash", detail: { type: "shell", command: "ls", output: "x", exitCode: 0 } }], text: "done" }],
     // A recorded reply: every step waits for its own gap.
     timed: [
@@ -25,6 +37,19 @@ const SCRIPT = {
 };
 
 let env;
+
+/** Polls until the agent has a pending permission card, and returns its id. */
+async function pendingCard(agentId) {
+  const ref = env.api.agents.ref(agentId);
+  const deadline = Date.now() + env.ms(10000);
+  while (Date.now() < deadline) {
+    await ref.refresh().catch(() => null);
+    const p = (ref.pendingPermissions ?? [])[0];
+    if (p) return p.request?.id ?? p.id;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`no permission card on ${agentId}`);
+}
 const assistantTexts = async (id) => (await env.timeline(id)).filter((e) => e.item?.type === "assistant_message").map((e) => e.item.text);
 
 before(async () => {
@@ -149,5 +174,20 @@ describe("scripted provider on a real daemon", () => {
     assert.match(merged.text, /# keep my notes/);
     assert.match(merged.text, /keep:/);
     assert.match(merged.text, /recorded:/);
+  });
+
+  it("raises a permission card and branches on the answer", async () => {
+    const yes = await env.createAgent({ scenario: "perm", prompt: "go" });
+    const no = await env.createAgent({ scenario: "perm", prompt: "go" });
+    await env.api.agents.ref(yes.id).respondToPermission({ requestId: await pendingCard(yes.id), response: { behavior: "allow", selectedActionId: "accept" } });
+    await env.api.agents
+      .ref(no.id)
+      .respondToPermission({ requestId: await pendingCard(no.id), response: { behavior: "deny", selectedActionId: "reject", message: "Denied by user" } });
+    await env.waitForFinish(yes.id);
+    await env.waitForFinish(no.id);
+    assert.deepEqual(await assistantTexts(yes.id), ["allowed", "after"]);
+    assert.deepEqual(await assistantTexts(no.id), ["denied: Denied by user", "after"]);
+    const answers = env.readRecord().filter((r) => r.kind === "permission_response");
+    assert.deepEqual(answers.map((r) => r.branch).sort(), ["accept", "reject"]);
   });
 });
