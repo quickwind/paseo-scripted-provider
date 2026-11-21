@@ -1,8 +1,9 @@
 import type { ProviderEvent, ProviderPrompt } from "@getpaseo/plugin/server/provider";
 import type { Clock, NewId } from "../shared/core/clock";
-import { planReply, type Action } from "../shared/core/planner";
+import { buildRequest, permissionVars, selectBranch, substituteBranch, answersOf, type PermissionResponse } from "../shared/core/permission";
+import { planReply, planSteps, type Action } from "../shared/core/planner";
 import type { Recorder } from "../shared/core/recorder";
-import type { Script } from "../shared/core/schema";
+import type { PermissionSpec, Script, Step, ToolSpec } from "../shared/core/schema";
 import { matchStep, resolveReply } from "../shared/core/script";
 
 export interface Persisted {
@@ -39,12 +40,35 @@ interface ActiveTurn {
   aborted: Promise<void>;
 }
 
+/** Why a card was resolved without an answer. */
+export type CancelReason = "interrupted" | "superseded" | "interrupt_deny" | "branch_outcome" | "failed";
+
+interface PendingCard {
+  turnId: string;
+  spec: PermissionSpec;
+  answer: (r: PermissionResponse) => void;
+}
+
+type ToolItem = { id: string; type: "tool_call"; callId: string; name: string; detail: unknown };
+
+/** Per-run state shared by a reply and the branches it runs. */
+interface RunCtx {
+  idFor: (key: string) => string;
+  texts: Map<string, string>;
+}
+
+type Flow = "continue" | "ended";
+
 export class ScriptedSession {
   private scenario: string | null;
   private step: number;
   private logicalId: string;
   private transcript: Persisted["transcript"];
   private turn: ActiveTurn | null = null;
+  /** Cards waiting for an answer, by permission id. */
+  private pending = new Map<string, PendingCard>();
+  /** Tool calls shown as running, by item id (canceled if their turn ends early). */
+  private openTools = new Map<string, { turnId: string; item: ToolItem }>();
 
   constructor(private d: SessionDeps) {
     this.scenario = d.persisted?.scenario ?? d.initialScenario ?? null;
@@ -108,7 +132,7 @@ export class ScriptedSession {
     }
     this.step = step + 1;
     this.transcript.push({ id: p.clientMessageId, type: "user_message", text });
-    if (this.turn) this.endTurn(this.turn.id, "canceled", "superseded by new prompt");
+    if (this.turn) this.endTurn(this.turn.id, "canceled", "superseded by new prompt", undefined, "superseded");
 
     const id = this.d.newId();
     let abort!: () => void;
@@ -120,7 +144,7 @@ export class ScriptedSession {
       // e.g. the daemon rejected an emitted item: end the turn instead of leaving it running forever.
       console.error("[scripted-provider] turn failed", e);
       try {
-        this.endTurn(id, "failed", `scripted turn failed: ${e instanceof Error ? e.message : String(e)}`, "E_SCRIPT_RUNTIME");
+        this.endTurn(id, "failed", `scripted turn failed: ${e instanceof Error ? e.message : String(e)}`, "E_SCRIPT_RUNTIME", "failed");
       } catch (again) {
         console.error("[scripted-provider] could not report the failure", again);
       }
@@ -131,20 +155,57 @@ export class ScriptedSession {
   dispose(): void {
     const t = this.turn;
     this.turn = null;
+    this.pending.clear();
+    this.openTools.clear();
     t?.abort();
+  }
+
+  /**
+   * The answer to a card. Synchronous: the card is resolved before anything else can arrive for it,
+   * so a duplicate or stale answer finds nothing pending and is only recorded.
+   */
+  respond(permissionId: string, response: PermissionResponse): void {
+    const card = this.pending.get(permissionId);
+    if (!card) {
+      this.d.recorder.record("permission_unknown", { sessionId: this.logicalId, permissionId });
+      return;
+    }
+    this.pending.delete(permissionId);
+    this.d.emit({ type: "session.permission_resolved", sessionId: this.d.sessionId, permissionId });
+    this.d.recorder.record("permission_response", {
+      sessionId: this.logicalId,
+      permissionId,
+      behavior: response.behavior,
+      selectedActionId: response.selectedActionId,
+      message: response.behavior === "deny" ? response.message : undefined,
+      interrupt: response.behavior === "deny" ? response.interrupt : undefined,
+      answers: answersOf(response),
+      branch: selectBranch(card.spec, response)?.key ?? null,
+    });
+    card.answer(response);
   }
 
   interrupt(requestId: string): void {
     this.d.recorder.record("interrupt", { sessionId: this.logicalId, activeTurn: this.activeTurn });
-    if (this.turn) this.endTurn(this.turn.id, "canceled", "interrupted");
+    if (this.turn) this.endTurn(this.turn.id, "canceled", "interrupted", undefined, "interrupted");
     this.d.emit({ type: "request.completed", requestId });
   }
 
-  /** Emits exactly one terminal event per turn; later calls for the same turn are no-ops. */
-  private endTurn(turnId: string, state: "completed" | "failed" | "canceled", message?: string, code?: string): void {
+  /**
+   * Emits exactly one terminal event per turn; later calls for the same turn are no-ops.
+   * Cards and tool calls the turn left open are closed first.
+   */
+  private endTurn(
+    turnId: string,
+    state: "completed" | "failed" | "canceled",
+    message?: string,
+    code?: string,
+    reason: CancelReason = "interrupted",
+  ): void {
     if (this.turn?.id !== turnId) return;
     const t = this.turn;
     this.turn = null;
+    this.closeOpen(turnId, reason);
     t.abort();
     this.d.emit({
       type: "session.persistence",
@@ -160,6 +221,38 @@ export class ScriptedSession {
     });
   }
 
+  private closeOpen(turnId: string, reason: CancelReason): void {
+    for (const [permissionId, card] of [...this.pending]) {
+      if (card.turnId !== turnId) continue;
+      this.pending.delete(permissionId);
+      this.d.emit({ type: "session.permission_resolved", sessionId: this.d.sessionId, permissionId });
+      this.d.recorder.record("permission_canceled", { sessionId: this.logicalId, permissionId, reason });
+    }
+    for (const [id, open] of [...this.openTools]) {
+      if (open.turnId !== turnId) continue;
+      this.openTools.delete(id);
+      this.emitItem({ ...open.item, status: "canceled", error: null });
+    }
+  }
+
+  private emitItem(item: Record<string, unknown>): void {
+    this.d.emit({
+      type: "timeline.item",
+      sessionId: this.d.sessionId,
+      item: item as never,
+      timestamp: new Date(this.d.clock.now()).toISOString(),
+    });
+  }
+
+  private live(turnId: string): boolean {
+    return this.turn?.id === turnId;
+  }
+
+  /** Resolves after `ms`, or as soon as the turn ends. */
+  private wait(turnId: string, ms: number): Promise<void> {
+    return this.turn?.id === turnId ? Promise.race([this.d.clock.sleep(ms), this.turn.aborted]) : Promise.resolve();
+  }
+
   private async run(turnId: string, actions: Action[]): Promise<void> {
     const ids = new Map<string, string>();
     const idFor = (k: string) => {
@@ -167,55 +260,131 @@ export class ScriptedSession {
       if (!v) ids.set(k, (v = this.d.newId()));
       return v;
     };
-    const texts = new Map<string, string>();
-    const live = () => this.turn?.id === turnId;
-    const emitItem = (item: Record<string, unknown>) =>
-      this.d.emit({
-        type: "timeline.item",
-        sessionId: this.d.sessionId,
-        item: item as never,
-        timestamp: new Date(this.d.clock.now()).toISOString(),
-      });
+    await this.runActions(turnId, actions, { idFor, texts: new Map() });
+  }
 
+  private async runActions(turnId: string, actions: Action[], ctx: RunCtx): Promise<Flow> {
     for (const a of actions) {
-      if (!live()) return;
+      if (!this.live(turnId)) return "ended";
       switch (a.t) {
         case "sleep":
-          await Promise.race([this.d.clock.sleep(a.ms), this.turn!.aborted]);
+          await this.wait(turnId, a.ms);
           break;
         case "reasoning":
-          emitItem({ id: idFor(a.key), type: "reasoning", text: a.text });
+          this.emitItem({ id: ctx.idFor(a.key), type: "reasoning", text: a.text });
           break;
         case "assistant": {
-          const id = idFor(a.key);
-          emitItem({ id, type: "assistant_message", text: a.text, messageId: id });
-          texts.set(a.key, a.text);
+          const id = ctx.idFor(a.key);
+          this.emitItem({ id, type: "assistant_message", text: a.text, messageId: id });
+          ctx.texts.set(a.key, a.text);
           break;
         }
-        case "tool": {
-          const id = idFor(a.key);
-          const base = { id, type: "tool_call", callId: id, name: a.spec.name, detail: a.spec.detail };
-          emitItem(
-            a.status === "failed"
-              ? { ...base, status: "failed", error: a.spec.error ?? "scripted failure" }
-              : { ...base, status: a.status, error: null },
-          );
+        case "tool":
+          this.emitTool(this.toolItem(a.key, a.spec, ctx), a.spec, a.status);
           break;
-        }
-        case "end": {
-          if (a.outcome === "hang") {
-            await this.turn!.aborted;
-            return; // endTurn already emitted the terminal event
-          }
-          if (texts.size > 0) {
-            this.transcript.push({ id: this.d.newId(), type: "assistant_message", text: [...texts.values()].join("") });
-          }
-          const msg =
-            a.outcome === "failed" ? (a.error ?? "scripted failure") : a.outcome === "canceled" ? (a.error ?? "scripted cancel") : undefined;
-          this.endTurn(turnId, a.outcome, msg, a.outcome === "failed" ? "E_SCRIPTED" : undefined);
-          return;
-        }
+        case "permission":
+          if ((await this.runPermission(turnId, a, ctx)) === "ended") return "ended";
+          break;
+        case "parallel":
+          if ((await this.runParallel(turnId, a.children, ctx)) === "ended") return "ended";
+          break;
+        case "end":
+          return this.finish(turnId, a.outcome, a.error, ctx);
       }
     }
+    return this.live(turnId) ? "continue" : "ended";
+  }
+
+  /** Ends the turn the way a reply's `end` does: commit the text, then the terminal event (or hang). */
+  private async finish(
+    turnId: string,
+    outcome: "completed" | "failed" | "canceled" | "hang",
+    error: string | undefined,
+    ctx: RunCtx,
+    reason?: CancelReason,
+  ): Promise<Flow> {
+    if (!this.live(turnId)) return "ended";
+    if (outcome === "hang") {
+      await this.turn!.aborted;
+      return "ended"; // endTurn already emitted the terminal event
+    }
+    if (ctx.texts.size > 0) {
+      this.transcript.push({ id: this.d.newId(), type: "assistant_message", text: [...ctx.texts.values()].join("") });
+      ctx.texts.clear();
+    }
+    const msg = outcome === "failed" ? (error ?? "scripted failure") : outcome === "canceled" ? (error ?? "scripted cancel") : undefined;
+    this.endTurn(turnId, outcome, msg, outcome === "failed" ? "E_SCRIPTED" : undefined, reason);
+    return "ended";
+  }
+
+  private toolItem(key: string, spec: ToolSpec, ctx: RunCtx): ToolItem {
+    const id = ctx.idFor(key);
+    return { id, type: "tool_call", callId: id, name: spec.name, detail: spec.detail };
+  }
+
+  private emitTool(item: ToolItem, spec: ToolSpec, status: "running" | "completed" | "failed" | "canceled", error?: string): void {
+    this.emitItem(
+      status === "failed" ? { ...item, status, error: error ?? spec.error ?? "scripted failure" } : { ...item, status, error: null },
+    );
+  }
+
+  /** Shows a tool call as running and remembers it, so an early end can cancel it. */
+  private openTool(turnId: string, item: ToolItem, spec: ToolSpec): void {
+    this.emitTool(item, spec, "running");
+    this.openTools.set(item.id, { turnId, item });
+  }
+
+  private closeTool(item: ToolItem, spec: ToolSpec, status: "running" | "completed" | "failed" | "canceled", error?: string): void {
+    this.openTools.delete(item.id);
+    this.emitTool(item, spec, status, error);
+  }
+
+  /** Raises a card; resolves with the answer, or null if the turn ended first. */
+  private raise(turnId: string, spec: PermissionSpec, tool?: ToolSpec): Promise<PermissionResponse | null> {
+    const id = spec.id ?? this.d.newId();
+    if (this.pending.has(id)) throw new Error(`permission id "${id}" is already pending`);
+    const answered = new Promise<PermissionResponse>((answer) => this.pending.set(id, { turnId, spec, answer }));
+    const request = buildRequest(spec, id, tool);
+    this.d.recorder.record("permission_requested", { sessionId: this.logicalId, permissionId: id, cardKind: request.kind, name: request.name, step: this.step - 1 });
+    this.d.emit({ type: "session.permission", sessionId: this.d.sessionId, request: request as never });
+    return Promise.race([answered, this.turn!.aborted.then(() => null)]);
+  }
+
+  /** The tool's own result once its card is answered: allow → runningMs, then its status; deny → failed. */
+  private async settle(turnId: string, item: ToolItem, spec: ToolSpec, r: PermissionResponse): Promise<void> {
+    if (r.behavior === "deny") {
+      this.closeTool(item, spec, "failed", r.message ?? "denied");
+      return;
+    }
+    if (spec.runningMs && spec.runningMs > 0) await this.wait(turnId, spec.runningMs);
+    if (this.live(turnId)) this.closeTool(item, spec, spec.status ?? "completed");
+  }
+
+  private async runPermission(turnId: string, a: Extract<Action, { t: "permission" }>, ctx: RunCtx): Promise<Flow> {
+    const item = a.tool ? this.toolItem(a.key, a.tool, ctx) : undefined;
+    if (item && a.tool) this.openTool(turnId, item, a.tool);
+    const r = await this.raise(turnId, a.spec, a.tool);
+    if (!r || !this.live(turnId)) return "ended";
+    if (r.behavior === "deny" && r.interrupt) {
+      if (item && a.tool) this.closeTool(item, a.tool, "failed", r.message ?? "denied");
+      this.endTurn(turnId, "canceled", r.message ?? "denied", undefined, "interrupt_deny");
+      return "ended";
+    }
+    if (item && a.tool) await this.settle(turnId, item, a.tool, r);
+    if (!this.live(turnId)) return "ended";
+    return this.runBranch(turnId, a.spec, r, ctx);
+  }
+
+  private async runBranch(turnId: string, spec: PermissionSpec, r: PermissionResponse, ctx: RunCtx): Promise<Flow> {
+    const picked = selectBranch(spec, r);
+    if (!picked) return "continue";
+    const b = substituteBranch(picked.branch, permissionVars(spec, r));
+    const steps: Step[] = [...(b.text !== undefined ? [{ kind: "message" as const, text: b.text }] : []), ...(b.steps ?? [])];
+    if ((await this.runActions(turnId, planSteps(steps, this.d.newId), ctx)) === "ended") return "ended";
+    return b.outcome ? this.finish(turnId, b.outcome, b.error, ctx, "branch_outcome") : "continue";
+  }
+
+  private async runParallel(_turnId: string, _children: Extract<Action, { t: "parallel" }>["children"], _ctx: RunCtx): Promise<Flow> {
+    throw new Error("parallel permission groups are not supported yet");
   }
 }
