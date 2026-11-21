@@ -343,10 +343,14 @@ export class ScriptedSession {
   private raise(turnId: string, spec: PermissionSpec, tool?: ToolSpec): Promise<PermissionResponse | null> {
     const id = spec.id ?? this.d.newId();
     if (this.pending.has(id)) throw new Error(`permission id "${id}" is already pending`);
-    const answered = new Promise<PermissionResponse>((answer) => this.pending.set(id, { turnId, spec, answer }));
+    let answer!: (r: PermissionResponse) => void;
+    const answered = new Promise<PermissionResponse>((r) => (answer = r));
     const request = buildRequest(spec, id, tool);
-    this.d.recorder.record("permission_requested", { sessionId: this.logicalId, permissionId: id, cardKind: request.kind, name: request.name, step: this.step - 1 });
+    // Emit first: a card the daemon rejects throws here and is never registered, so ending the
+    // turn has no card to resolve (and nothing invalid to emit again).
     this.d.emit({ type: "session.permission", sessionId: this.d.sessionId, request: request as never });
+    this.pending.set(id, { turnId, spec, answer });
+    this.d.recorder.record("permission_requested", { sessionId: this.logicalId, permissionId: id, cardKind: request.kind, name: request.name, step: this.step - 1 });
     return Promise.race([answered, this.turn!.aborted.then(() => null)]);
   }
 

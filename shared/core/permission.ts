@@ -99,6 +99,8 @@ export function permissionVars(spec: PermissionSpec, r: PermissionResponse): Rec
     message: r.behavior === "deny" ? (r.message ?? "") : "",
     answer: firstAnswer(spec, answers) ?? "",
   };
+  // A declared question nobody answered is empty, like every other missing value.
+  for (const q of declaredQuestions(spec) ?? []) vars[`answers.${q.header}`] = "";
   for (const [h, v] of Object.entries(answers ?? {})) vars[`answers.${h}`] = v;
   return vars;
 }
@@ -122,11 +124,17 @@ function subJson<T>(v: T, vars: Record<string, string>): T {
 
 const opt = (s: string | undefined, vars: Record<string, string>) => (s === undefined ? undefined : subText(s, vars));
 
-/** A nested card is filled from the outer answer, except its own branches (they use its own answer). */
+/**
+ * A nested card's shown fields are filled from the outer answer. Its id, name, actions, metadata and
+ * suggestions are not (a substituted id could become empty and be rejected), nor its own branches
+ * (they use the nested card's own answer).
+ */
 function subPermission(p: PermissionSpec, vars: Record<string, string>): PermissionSpec {
-  const { on, ...rest } = p;
-  const out = subJson(rest, vars);
-  return on === undefined ? out : { ...out, on };
+  const out: PermissionSpec = { ...p, title: opt(p.title, vars), description: opt(p.description, vars), plan: opt(p.plan, vars) };
+  if (p.input) out.input = subJson(p.input, vars);
+  if (p.detail) out.detail = subJson(p.detail, vars);
+  if (p.questions) out.questions = subJson(p.questions, vars);
+  return out;
 }
 
 function subTool(t: ToolSpec, vars: Record<string, string>): ToolSpec {

@@ -274,3 +274,22 @@ describe("permission cards: parallel groups", () => {
     expect(end).toMatchObject({ state: "failed", error: { code: "E_SCRIPT_RUNTIME" } });
   });
 });
+
+describe("permission cards: review fixes", () => {
+  it("a variable in a nested card's id is not substituted (the card is still raised)", async () => {
+    const inner = { id: "{{permission.action}}", actions: [{ id: "{{permission.action}}", label: "x", behavior: "allow" }] };
+    const h = await setup({ a: [{ steps: [{ kind: "permission", permission: { id: "p", on: { allow: { steps: [{ kind: "permission", permission: inner }] } } } }] }] });
+    await h.send(prompt("s1", "go"));
+    await h.respond("p", { behavior: "allow" });
+    expect(cards(h).map((c) => c.id)).toEqual(["p", "{{permission.action}}"]);
+    expect(cards(h)[1].actions[0].id).toBe("{{permission.action}}");
+    expect(turnStates(h.events)).toEqual(["started"]);
+  });
+
+  it("a card the daemon rejects fails the turn instead of hanging it", async () => {
+    const h = await setup({ a: [{ steps: [{ kind: "permission", permission: { id: "" } }] }] });
+    await h.send(prompt("s1", "go"));
+    expect(turnStates(h.events)).toEqual(["started", "failed"]);
+    expect(h.rec.some((r) => r.kind === "permission_requested")).toBe(false);
+  });
+});

@@ -141,3 +141,12 @@ describe("substituteBranch", () => {
     expect(p.on!.allow.text).toBe("keep {{permission.message}}");
   });
 });
+
+describe("permissionVars: missing answers", () => {
+  it("a declared question without an answer is empty", () => {
+    const v = permissionVars({ questions: [Q("F"), Q("G")] }, answers({ G: "A" }));
+    expect(v["answers.F"]).toBe("");
+    expect(v["answers.G"]).toBe("A");
+    expect(permissionVars({ questions: [Q("F")] }, deny())["answers.F"]).toBe("");
+  });
+});
