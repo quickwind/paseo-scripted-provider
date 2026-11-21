@@ -12,7 +12,7 @@ export async function connect(deps: Partial<ProviderDeps> & Pick<ProviderDeps, "
     newId: () => `id-${++id}`,
     ...deps,
   });
-  const conn = await reg.connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+  const conn = await reg.connect({ versions: [1], capabilities: ["prompt.message", "session.persistence", "permission"] });
   const events: ProviderEvent[] = [];
   conn.onEvent((e) => {
     expectValid(e);

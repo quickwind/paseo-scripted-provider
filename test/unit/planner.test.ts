@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planReply } from "../../shared/core/planner";
+import { planReply, planSteps } from "../../shared/core/planner";
 
 let n = 0;
 const key = () => `k${++n}`;
@@ -75,5 +75,50 @@ describe("planReply", () => {
       expect(kinds(a)).toEqual(["sleep", "assistant", "end"]);
       expect((a.find((x) => x.t === "assistant") as any).text).toBe("kept");
     });
+  });
+});
+
+describe("permission actions", () => {
+  const bash = { name: "Bash", detail: { type: "shell" as const, command: "rm" } };
+  it("a tool with permission plans one permission action carrying the tool (tools[])", () => {
+    const a = planReply({ tools: [{ ...bash, runningMs: 50, permission: { title: "ok?" } }] }, key);
+    expect(kinds(a)).toEqual(["permission", "end"]);
+    expect((a[0] as any).tool.name).toBe("Bash");
+    expect((a[0] as any).spec.title).toBe("ok?");
+  });
+  it("a tool with permission plans one permission action carrying the tool (steps[])", () => {
+    const a = planReply({ steps: [{ kind: "tool", delayMs: 5, tool: { ...bash, permission: {} } }] }, key);
+    expect(kinds(a)).toEqual(["sleep", "permission", "end"]);
+    expect((a[1] as any).tool.name).toBe("Bash");
+  });
+  it("a standalone permission step plans a permission action without tool", () => {
+    const a = planReply({ steps: [{ kind: "permission", permission: { kind: "mode" } }] }, key);
+    expect(kinds(a)).toEqual(["permission", "end"]);
+    expect((a[0] as any).tool).toBeUndefined();
+  });
+  it("a parallel step plans one parallel action with a child per step, in order", () => {
+    const a = planReply(
+      {
+        steps: [
+          {
+            kind: "parallel",
+            delayMs: 7,
+            steps: [
+              { kind: "tool", tool: { ...bash, permission: { id: "a" } } },
+              { kind: "permission", permission: { id: "b" } },
+              { kind: "tool", tool: { name: "Read", detail: { type: "plain_text" } } },
+            ],
+          },
+        ],
+      },
+      key,
+    );
+    expect(kinds(a)).toEqual(["sleep", "parallel", "end"]);
+    const children = (a[1] as any).children;
+    expect(children.map((c: any) => [c.tool?.name, c.permission?.id])).toEqual([["Bash", "a"], [undefined, "b"], ["Read", undefined]]);
+    expect(new Set(children.map((c: any) => c.key)).size).toBe(3);
+  });
+  it("planSteps returns no end action", () => {
+    expect(planSteps([{ kind: "message", text: "x" }], key).map((x) => x.t)).toEqual(["assistant"]);
   });
 });

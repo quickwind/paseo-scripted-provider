@@ -133,7 +133,7 @@ The same in JSON:
 | `outcome` | `completed` (default), `failed`, `canceled`, or `hang` (stay running until interrupted) |
 | `error` | message for a `failed`/`canceled` outcome |
 | `expect` | the user message this step expects (set by recordings); see *alignment* |
-| `@NAME` | a whole-string `text`/`chunks`/`messages` value equal to `@NAME` expands the macro `NAME` |
+| `@NAME` | a whole-string `text`/`chunks`/`messages` value equal to `@NAME` expands the macro `NAME` (also inside permission branches) |
 
 Invalid scripts, unknown scenario names and malformed tool details never stall a turn: the provider falls back to the built-ins (the settings page shows the problem) and a turn that cannot continue ends as `failed`. Tool `detail` objects are validated against Paseo's own tool-detail shapes when the script loads.
 
@@ -141,9 +141,83 @@ Behaviour worth knowing: an interrupt ends the active turn as `canceled`; a new 
 
 **Alignment** (setting): when a step has `expect` and the incoming message differs — `warn` (default) records a `mismatch` and continues, `strict` fails that prompt with code `E_SCRIPT_MISMATCH`, `ignore` doesn't check.
 
+### Permission cards
+
+A reply can stop and ask for approval with a **real** Paseo permission card, wait for the answer, and continue differently depending on it — so anything that reacts to permission cards (auto-approve plugins, the app's permission UI, notifications) can be tested against a deterministic agent. Nothing is ever executed: approving a tool only changes how its call is shown.
+
+- On a tool (in `tools[]` or a `tool` step): add `permission`. The tool shows as running, the card appears, allow → the tool completes (after its `runningMs`), deny → the tool fails with the deny message (or `denied`).
+- Any other card: a step `{ kind: permission, permission: {...} }`. Give `questions` for an AskUserQuestion card, `plan` for a plan card, or `kind: mode` / `kind: other`.
+- Several cards at once: a step `{ kind: parallel, steps: [...] }` holding `tool` and `permission` steps. Every tool and card appears first; each answer settles its own tool; once everything has settled the branches run in declaration order.
+
+```yaml
+scenarios:
+  approvals:
+    - tools:
+        - name: Bash
+          detail: { type: shell, command: "rm -rf build" }
+          permission:
+            title: Allow rm?
+            actions:                      # optional custom buttons (default: accept / reject)
+              - { id: once,   label: Allow once,   behavior: allow, variant: primary }
+              - { id: always, label: Always allow, behavior: allow }
+              - { id: no,     label: Deny,         behavior: deny,  variant: danger }
+            on:
+              always: { text: "Remembered." }
+              no: { text: "OK, not deleting ({{permission.message}}).", outcome: canceled }
+      text: Build directory removed.
+    - steps:
+        - kind: permission
+          permission:
+            plan: "1. Add the schema\n2. Wire the session"
+            on: { reject: { text: "Back to planning.", outcome: completed } }
+        - kind: permission
+          permission:
+            questions:
+              - header: Framework
+                question: Which framework?
+                options: [{ label: React }, { label: Vue }]
+            on:
+              "answer:Vue": { text: "Vue it is." }
+              any: { text: "Going with {{permission.answer}}." }
+        - kind: parallel
+          steps:
+            - kind: tool
+              tool: { name: Edit, detail: { type: edit, filePath: src/a.ts }, permission: { id: edit-a } }
+            - kind: tool
+              tool: { name: Edit, detail: { type: edit, filePath: src/b.ts }, permission: { id: edit-b } }
+        - kind: message
+          text: Done.
+```
+
+| Permission field | Meaning |
+|---|---|
+| `id` | card id (default: generated); must be unique among cards pending at once |
+| `kind` | `tool`, `plan`, `question`, `mode`, `other` (default: `tool` on a tool, else inferred from `questions` / `plan`, else `other`) |
+| `name` | default: the tool's name, or `AskUserQuestion` / `ExitPlanMode` / `SwitchMode` / `permission` |
+| `title`, `description`, `input`, `detail`, `suggestions`, `metadata`, `actions` | passed to the card as-is (`input` / `metadata` / `suggestions` must be JSON) |
+| `plan` | the plan text (sent as `input.plan`, which is what the app renders) |
+| `questions` | AskUserQuestion questions (sent as `input.questions`; extra fields such as `preview` pass through) |
+| `on` | branches: `{ text?, steps?, outcome?, error? }` |
+
+**Which branch runs** (first match wins): the button id (`selectedActionId` — the app's default buttons are `accept` and `reject`); then question answers, `answer:<header>=<value>` in question order and `answer:<value>` for the first question (multi-select answers are the labels joined with `", "`, in click order); then `allow` / `deny`; then `any`. With no match only the default (tool completes / fails) applies. A branch's `text` and `steps` run, then the rest of the reply — unless the branch has an `outcome`, which ends the turn there.
+
+A deny with `interrupt: true` fails the tool and ends the turn `canceled` without running a branch. An interrupt or a new message while a card is waiting resolves the card, shows its tool as `canceled`, and ends the turn.
+
+**Variables** in a branch (its text, error, and every step below it; a nested card's own branches use the nested card's answer):
+
+| Variable | Value |
+|---|---|
+| `{{permission.behavior}}` | `allow` / `deny` |
+| `{{permission.action}}` | the button id, or empty |
+| `{{permission.message}}` | the deny message, or empty (the app always sends `Denied by user`) |
+| `{{permission.answer}}` | the first question's answer, or empty |
+| `{{permission.answers.<header>}}` | that question's answer (any header, spaces and CJK included) |
+
+Every other `{{…}}` text, including the redaction placeholders `{{secret_1}}` and `{{cwd}}`, is left as written.
+
 ## Received-messages log
 
-Set a log file in settings (or run with `SCRIPTED_PROVIDER_STATE=<dir>`, which uses `<dir>/scenarios.json` and `<dir>/received.jsonl`). One JSON line per event: `open`, `prompt` (text, `delivery`, `step`, `scenario`, `activeTurnAtArrival`, `clientMessageId`), `interrupt`, `mismatch`. Assert on it in tests; view the tail in the settings page.
+Set a log file in settings (or run with `SCRIPTED_PROVIDER_STATE=<dir>`, which uses `<dir>/scenarios.json` and `<dir>/received.jsonl`). One JSON line per event: `open`, `prompt` (text, `delivery`, `step`, `scenario`, `activeTurnAtArrival`, `clientMessageId`), `interrupt`, `mismatch`, and for permission cards `permission_requested` (`permissionId`, `cardKind`, `name`), `permission_response` (`behavior`, `selectedActionId`, `message`, `interrupt`, `answers`, `branch`), `permission_canceled` (`reason`: `interrupted`, `superseded`, `interrupt_deny`, `branch_outcome`, `failed`) and `permission_unknown` (an answer for a card that is not pending). Assert on it in tests; view the tail in the settings page.
 
 ## Record a session as a script
 
@@ -223,7 +297,7 @@ npm run verify:real      # local only: real opencode / devin sessions → record
 
 ## Roadmap
 
-Permission-approval flows, real MCP calls from scripts, template variables, prompt-matching rules, persisted custom redaction rules.
+Recording permission cards from real sessions, real MCP calls from scripts, template variables, prompt-matching rules, persisted custom redaction rules.
 
 ## Third-party code
 

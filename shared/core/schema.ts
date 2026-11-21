@@ -54,13 +54,110 @@ export const ToolDetailSchema = z.discriminatedUnion("type", [
 ]);
 export type ToolDetail = z.infer<typeof ToolDetailSchema>;
 
-export const ToolSpecSchema = z.object({
-  name: z.string().min(1),
-  detail: ToolDetailSchema,
-  status: z.enum(["running", "completed", "failed", "canceled"]).optional(),
-  runningMs: ms.optional(),
-  error: z.string().optional(),
+export const PermissionActionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  behavior: z.enum(["allow", "deny"]),
+  variant: z.enum(["primary", "secondary", "danger"]).optional(),
+  intent: z.enum(["implement", "implement_resume", "dismiss"]).optional(),
 });
+
+/** One AskUserQuestion question; extra fields the app understands (preview, placeholder…) pass through. */
+export const QuestionSchema = loose({
+  header: z.string(),
+  question: z.string(),
+  options: z.array(loose({ label: z.string() })),
+});
+
+const jsonRecord = z.record(z.string(), z.json());
+const outcome = z.enum(["completed", "failed", "canceled", "hang"]);
+
+export type PermissionAction = z.infer<typeof PermissionActionSchema>;
+export type Question = z.infer<typeof QuestionSchema>;
+
+export interface ToolSpec {
+  name: string;
+  detail: ToolDetail;
+  status?: "running" | "completed" | "failed" | "canceled";
+  runningMs?: number;
+  error?: string;
+  permission?: PermissionSpec;
+}
+
+export interface PermissionSpec {
+  id?: string;
+  kind?: "tool" | "plan" | "question" | "mode" | "other";
+  name?: string;
+  title?: string;
+  description?: string;
+  input?: Record<string, z.core.util.JSONType>;
+  detail?: ToolDetail;
+  suggestions?: Record<string, z.core.util.JSONType>[];
+  metadata?: Record<string, z.core.util.JSONType>;
+  plan?: string;
+  questions?: Question[];
+  actions?: PermissionAction[];
+  on?: Record<string, Branch>;
+}
+
+export interface Branch {
+  text?: string;
+  steps?: Step[];
+  outcome?: "completed" | "failed" | "canceled" | "hang";
+  error?: string;
+}
+
+export interface Step {
+  kind: "reasoning" | "message" | "tool" | "permission" | "parallel";
+  delayMs?: number;
+  text?: string;
+  tool?: ToolSpec;
+  permission?: PermissionSpec;
+  steps?: Step[];
+}
+
+export const BranchSchema: z.ZodType<Branch> = z.lazy(() =>
+  z.object({
+    text: z.string().optional(),
+    steps: z.array(StepSchema).optional(),
+    outcome: outcome.optional(),
+    error: z.string().optional(),
+  }),
+);
+
+export const PermissionSpecSchema: z.ZodType<PermissionSpec> = z.lazy(() =>
+  z.object({
+    id: z.string().min(1).optional(),
+    kind: z.enum(["tool", "plan", "question", "mode", "other"]).optional(),
+    name: z.string().min(1).optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    input: jsonRecord.optional(),
+    detail: ToolDetailSchema.optional(),
+    suggestions: z.array(jsonRecord).optional(),
+    metadata: jsonRecord.optional(),
+    plan: z.string().optional(),
+    questions: z.array(QuestionSchema).min(1).optional(),
+    actions: z.array(PermissionActionSchema).optional(),
+    on: z.record(z.string(), BranchSchema).optional(),
+  }),
+);
+
+export const ToolSpecSchema: z.ZodType<ToolSpec> = z.lazy(() =>
+  z.object({
+    name: z.string().min(1),
+    detail: ToolDetailSchema,
+    status: z.enum(["running", "completed", "failed", "canceled"]).optional(),
+    runningMs: ms.optional(),
+    error: z.string().optional(),
+    permission: PermissionSpecSchema.optional(),
+  }),
+);
+
+/** The explicit card id of a parallel child, if it has one. */
+function childId(s: Step): string | undefined {
+  return s.permission?.id ?? s.tool?.permission?.id;
+}
 
 /**
  * One timed step of a reply, in the order the original agent produced it.
@@ -69,16 +166,45 @@ export const ToolSpecSchema = z.object({
  * so thinking time, every tool call and every message keep their own duration and a replay takes
  * as long as the original turn did. Hand-written scripts normally use `text`/`messages`/`tools`
  * instead and ignore this.
+ *
+ * `permission` raises a permission card and waits for the answer; `parallel` raises several at once.
  */
-export const StepSchema = z.object({
-  kind: z.enum(["reasoning", "message", "tool"]),
-  /** Wait before this step is emitted: the gap to the previous event. */
-  delayMs: z.number().int().min(0).optional(),
-  /** The text of a reasoning or message step. */
-  text: z.string().optional(),
-  /** The tool a tool step calls. */
-  tool: ToolSpecSchema.optional(),
-});
+export const StepSchema: z.ZodType<Step> = z.lazy(() =>
+  z
+    .object({
+      kind: z.enum(["reasoning", "message", "tool", "permission", "parallel"]),
+      /** Wait before this step is emitted: the gap to the previous event. */
+      delayMs: z.number().int().min(0).optional(),
+      /** The text of a reasoning or message step. */
+      text: z.string().optional(),
+      /** The tool a tool step calls. */
+      tool: ToolSpecSchema.optional(),
+      /** The card a permission step raises. */
+      permission: PermissionSpecSchema.optional(),
+      /** The children of a parallel step: tool and permission steps only. */
+      steps: z.array(StepSchema).optional(),
+    })
+    .superRefine(function (s, ctx) {
+      if (s.kind === "permission" && !s.permission) {
+        ctx.addIssue({ code: "custom", path: ["permission"], message: "a permission step needs `permission`" });
+      }
+      if (s.kind !== "parallel") return;
+      if (!s.steps || s.steps.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["steps"], message: "a parallel step needs `steps`" });
+        return;
+      }
+      const seen = new Set<string>();
+      s.steps.forEach(function (child, i) {
+        if (child.kind !== "tool" && child.kind !== "permission") {
+          ctx.addIssue({ code: "custom", path: ["steps", i, "kind"], message: "parallel children must be tool or permission steps" });
+        }
+        const id = childId(child);
+        if (id === undefined) return;
+        if (seen.has(id)) ctx.addIssue({ code: "custom", path: ["steps", i], message: `duplicate permission id "${id}" in a parallel group` });
+        seen.add(id);
+      });
+    }),
+);
 
 export const ReplySchema = z.object({
   text: z.string().optional(),
@@ -101,7 +227,5 @@ export const ScriptSchema = z.object({
   scenarios: z.record(z.string(), z.array(ReplySchema)),
 });
 
-export type ToolSpec = z.infer<typeof ToolSpecSchema>;
 export type Reply = z.infer<typeof ReplySchema>;
-export type Step = z.infer<typeof StepSchema>;
 export type Script = z.infer<typeof ScriptSchema>;

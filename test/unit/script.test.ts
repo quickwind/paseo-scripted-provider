@@ -159,3 +159,27 @@ scenarios:
     expect(parseScript("- a\n- b\n").ok).toBe(false);
   });
 });
+
+describe("macros inside permission branches", () => {
+  it("resolveReply expands @MACRO inside branches", () => {
+    const branch = (t: string) => ({ text: t, steps: [{ kind: "message" as const, text: t }] });
+    const script = {
+      macros: { M: "expanded" },
+      scenarios: {
+        a: [
+          {
+            tools: [{ name: "T", detail: { type: "plain_text" as const }, permission: { on: { deny: branch("@M") } } }],
+            steps: [
+              { kind: "permission" as const, permission: { on: { allow: branch("@M") } } },
+              { kind: "parallel" as const, steps: [{ kind: "tool" as const, tool: { name: "T", detail: { type: "plain_text" as const }, permission: { on: { any: branch("@M") } } } }] },
+            ],
+          },
+        ],
+      },
+    };
+    const r = resolveReply(script, "a", 0).reply;
+    expect(r.tools![0].permission!.on!.deny).toEqual(branch("expanded"));
+    expect(r.steps![0].permission!.on!.allow).toEqual(branch("expanded"));
+    expect(r.steps![1].steps![0].tool!.permission!.on!.any).toEqual(branch("expanded"));
+  });
+});

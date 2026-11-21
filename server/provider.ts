@@ -75,7 +75,7 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
               type: "session.opened",
               requestId: input.requestId,
               sessionId: input.sessionId,
-              capabilities: ["prompt.message", "session.persistence"],
+              capabilities: ["prompt.message", "session.persistence", "permission"],
               restoration: "core",
               cwd: input.config.cwd,
               persistence: { version: 1, data: s.persistence() as unknown as never },
@@ -112,6 +112,10 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
             else emit({ type: "request.completed", requestId: input.requestId });
             return;
           }
+          case "session.permission":
+            // An unknown or closed session has no card to answer.
+            sessions.get(input.sessionId)?.respond(input.permissionId, input.response as never);
+            return;
           case "session.close":
             sessions.get(input.sessionId)?.dispose();
             sessions.delete(input.sessionId);
@@ -125,7 +129,7 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
 
       return {
         version: 1,
-        capabilities: ["prompt.message", "session.persistence"],
+        capabilities: ["prompt.message", "session.persistence", "permission"],
         async send(input) {
           try {
             handle(input);
