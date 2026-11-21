@@ -38,6 +38,18 @@ const SCRIPT = {
 
 let env;
 
+/** Polls the timeline until the assistant texts equal `expected` (or the deadline passes). */
+async function waitForTexts(agentId, expected) {
+  const deadline = Date.now() + env.ms(15000);
+  let got = [];
+  while (Date.now() < deadline) {
+    got = await assistantTexts(agentId);
+    if (JSON.stringify(got) === JSON.stringify(expected)) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.deepEqual(got, expected);
+}
+
 /** Polls until the agent has a pending permission card, and returns its id. */
 async function pendingCard(agentId) {
   const ref = env.api.agents.ref(agentId);
@@ -183,10 +195,10 @@ describe("scripted provider on a real daemon", () => {
     await env.api.agents
       .ref(no.id)
       .respondToPermission({ requestId: await pendingCard(no.id), response: { behavior: "deny", selectedActionId: "reject", message: "Denied by user" } });
-    await env.waitForFinish(yes.id);
-    await env.waitForFinish(no.id);
-    assert.deepEqual(await assistantTexts(yes.id), ["allowed", "after"]);
-    assert.deepEqual(await assistantTexts(no.id), ["denied: Denied by user", "after"]);
+    // Poll for the replies rather than trusting one read after waitForFinish: that wait can return
+    // before the answered turn has written its messages (seen on the Windows runner).
+    await waitForTexts(yes.id, ["allowed", "after"]);
+    await waitForTexts(no.id, ["denied: Denied by user", "after"]);
     const answers = env.readRecord().filter((r) => r.kind === "permission_response");
     assert.deepEqual(answers.map((r) => r.branch).sort(), ["accept", "reject"]);
   });
