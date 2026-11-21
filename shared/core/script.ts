@@ -1,4 +1,4 @@
-import { ScriptSchema, type Reply, type Script } from "./schema";
+import { ScriptSchema, type Branch, type PermissionSpec, type Reply, type Script, type Step, type ToolSpec } from "./schema";
 import { parseYaml } from "./yaml";
 
 export type ParseResult = { ok: true; script: Script } | { ok: false; error: string };
@@ -74,6 +74,32 @@ export function matchStep(script: Script, scenario: string, current: number, tex
   return current;
 }
 
+function expandBranch(b: Branch, m: Record<string, string>): Branch {
+  return { ...b, ...(b.text !== undefined ? { text: expandMacro(b.text, m) } : {}), ...(b.steps ? { steps: b.steps.map((s) => expandStep(s, m)) } : {}) };
+}
+
+function expandPermission(p: PermissionSpec, m: Record<string, string>): PermissionSpec {
+  if (!p.on) return p;
+  const on: Record<string, Branch> = {};
+  for (const [k, b] of Object.entries(p.on)) on[k] = expandBranch(b, m);
+  return { ...p, on };
+}
+
+function expandTool(t: ToolSpec, m: Record<string, string>): ToolSpec {
+  return t.permission ? { ...t, permission: expandPermission(t.permission, m) } : t;
+}
+
+/** `@MACRO` in a step's text, and in every branch text below it. */
+function expandStep(s: Step, m: Record<string, string>): Step {
+  return {
+    ...s,
+    ...(s.text !== undefined ? { text: expandMacro(s.text, m) } : {}),
+    ...(s.tool ? { tool: expandTool(s.tool, m) } : {}),
+    ...(s.permission ? { permission: expandPermission(s.permission, m) } : {}),
+    ...(s.steps ? { steps: s.steps.map((c) => expandStep(c, m)) } : {}),
+  };
+}
+
 const FALLBACK: Reply = { text: "plain default reply" };
 
 export function resolveReply(script: Script, scenario: string, step: number): { reply: Reply; step: number } {
@@ -89,7 +115,8 @@ export function resolveReply(script: Script, scenario: string, step: number): { 
       reasoning: expandMacro(raw.reasoning, m),
       chunks: raw.chunks?.map((c) => expandMacro(c, m) ?? ""),
       messages: raw.messages?.map((c) => expandMacro(c, m) ?? ""),
-      steps: raw.steps?.map((s) => (s.text === undefined ? s : { ...s, text: expandMacro(s.text, m) })),
+      tools: raw.tools?.map((t) => expandTool(t, m)),
+      steps: raw.steps?.map((s) => expandStep(s, m)),
     },
   };
 }
