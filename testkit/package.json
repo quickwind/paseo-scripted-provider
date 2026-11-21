@@ -23,10 +23,10 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@getpaseo/cli": "0.12.0",
-    "@getpaseo/client": "0.12.0",
-    "@getpaseo/server": "0.12.0",
+    "@getpaseo/cli": "0.16.1",
+    "@getpaseo/client": "0.16.1",
+    "@getpaseo/server": "0.16.1",
     "tree-kill": "1.2.2",
-    "ws": "8.22.0"
+    "ws": "8.23.0"
   }
 }
