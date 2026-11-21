@@ -384,7 +384,51 @@ export class ScriptedSession {
     return b.outcome ? this.finish(turnId, b.outcome, b.error, ctx, "branch_outcome") : "continue";
   }
 
-  private async runParallel(_turnId: string, _children: Extract<Action, { t: "parallel" }>["children"], _ctx: RunCtx): Promise<Flow> {
-    throw new Error("parallel permission groups are not supported yet");
+  /**
+   * Several cards at once: every tool and card is shown first, each answer settles its own tool as it
+   * arrives, and once everything has settled the branches run in declaration order.
+   */
+  private async runParallel(turnId: string, children: Extract<Action, { t: "parallel" }>["children"], ctx: RunCtx): Promise<Flow> {
+    const aborted = this.turn!.aborted;
+    const tools = children.map((c) => (c.tool ? { item: this.toolItem(c.key, c.tool, ctx), spec: c.tool } : undefined));
+    const takesTime = (spec: ToolSpec) => !!spec.runningMs && spec.runningMs > 0;
+    children.forEach((c, i) => {
+      const t = tools[i];
+      if (!t) return;
+      if (c.permission || takesTime(t.spec)) this.openTool(turnId, t.item, t.spec);
+      else this.closeTool(t.item, t.spec, t.spec.status ?? "completed");
+    });
+    const asks = children.map((c) => (c.permission ? this.raise(turnId, c.permission, c.tool) : undefined));
+    const answers: (PermissionResponse | undefined)[] = [];
+
+    const settleChild = async (i: number): Promise<void> => {
+      const t = tools[i];
+      const ask = asks[i];
+      if (!ask) {
+        if (!t || !takesTime(t.spec)) return;
+        await this.wait(turnId, t.spec.runningMs!);
+        if (this.live(turnId)) this.closeTool(t.item, t.spec, t.spec.status ?? "completed");
+        return;
+      }
+      const r = await ask;
+      if (!r || !this.live(turnId)) return;
+      answers[i] = r;
+      if (r.behavior === "deny" && r.interrupt) {
+        if (t) this.closeTool(t.item, t.spec, "failed", r.message ?? "denied");
+        this.endTurn(turnId, "canceled", r.message ?? "denied", undefined, "interrupt_deny");
+        return;
+      }
+      if (t) await this.settle(turnId, t.item, t.spec, r);
+    };
+
+    await Promise.race([Promise.all(children.map((_, i) => settleChild(i))), aborted]);
+    if (!this.live(turnId)) return "ended";
+    for (let i = 0; i < children.length; i++) {
+      const spec = children[i].permission;
+      const r = answers[i];
+      if (!spec || !r) continue;
+      if ((await this.runBranch(turnId, spec, r, ctx)) === "ended") return "ended";
+    }
+    return "continue";
   }
 }

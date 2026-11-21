@@ -201,3 +201,76 @@ describe("permission cards: single card", () => {
     });
   });
 });
+
+describe("permission cards: parallel groups", () => {
+  const read = (extra: object = {}) => ({ name: "Read", detail: { type: "read", filePath: "/a" }, ...extra });
+  const group = (children: any[], after: any[] = [{ kind: "message", text: "rest" }]) => ({ a: [{ steps: [{ kind: "parallel", steps: children }, ...after] }] });
+  const t = (permission: object) => ({ kind: "tool", tool: bash(permission) });
+
+  it("emits every running tool and every card before waiting", async () => {
+    const h = await setup(group([t({ id: "a" }), t({ id: "b" }), { kind: "tool", tool: read({ runningMs: 300 }) }]));
+    await h.send(prompt("s1", "go"));
+    const seq = h.events
+      .filter((e: any) => e.type === "timeline.item" || e.type === "session.permission")
+      .map((e: any) => (e.type === "session.permission" ? `card:${e.request.id}` : `${e.item.name}:${e.item.status}`));
+    expect(seq).toEqual(["Bash:running", "Bash:running", "Read:running", "card:a", "card:b"]);
+    expect(turnStates(h.events)).toEqual(["started"]);
+  });
+
+  it("each answer settles its own tool on arrival", async () => {
+    const h = await setup(group([t({ id: "a" }), t({ id: "b" })]));
+    await h.send(prompt("s1", "go"));
+    await h.respond("b", { behavior: "allow" });
+    const byId = (id: string) => items(h).filter((i) => i.id === id).map((i) => i.status);
+    const [ia, ib] = [...new Set(items(h).map((i) => i.id))];
+    expect(byId(ia)).toEqual(["running"]);
+    expect(byId(ib)).toEqual(["running", "completed"]);
+  });
+
+  it("branches run in declaration order after all cards and tools settle", async () => {
+    const h = await setup(
+      group([t({ id: "a", on: { allow: { text: "A" } } }), t({ id: "b", on: { allow: { text: "B" } } }), { kind: "tool", tool: read({ runningMs: 300 }) }]),
+    );
+    await h.send(prompt("s1", "go"));
+    await h.respond("b", { behavior: "allow" });
+    await h.respond("a", { behavior: "allow" });
+    expect(texts(h)).toEqual([]);
+    await h.clock.advance(300);
+    expect(texts(h)).toEqual(["A", "B", "rest"]);
+    expect(turnStates(h.events)).toEqual(["started", "completed"]);
+  });
+
+  it("first branch with outcome ends the turn; later branches do not run", async () => {
+    const h = await setup(group([t({ id: "a", on: { deny: { text: "A", outcome: "failed", error: "no" } } }), t({ id: "b", on: { allow: { text: "B" } } })]));
+    await h.send(prompt("s1", "go"));
+    await h.respond("a", { behavior: "deny" });
+    await h.respond("b", { behavior: "allow" });
+    expect(texts(h)).toEqual(["A"]);
+    expect(turnStates(h.events)).toEqual(["started", "failed"]);
+  });
+
+  it("interrupt-deny on one card: its tool failed, the other card resolved, other tools canceled, turn canceled", async () => {
+    const h = await setup(group([t({ id: "a" }), t({ id: "b" }), { kind: "tool", tool: read({ runningMs: 300 }) }]));
+    await h.send(prompt("s1", "go"));
+    await h.respond("a", { behavior: "deny", interrupt: true, message: "stop" });
+    const final = new Map(items(h).map((i) => [i.id, i]));
+    expect([...final.values()].map((i) => [i.name, i.status])).toEqual([
+      ["Bash", "failed"],
+      ["Bash", "canceled"],
+      ["Read", "canceled"],
+    ]);
+    expect(resolved(h)).toEqual(["a", "b"]);
+    expect(h.rec.find((r) => r.kind === "permission_canceled")).toMatchObject({ permissionId: "b", reason: "interrupt_deny" });
+    expect(turnStates(h.events)).toEqual(["started", "canceled"]);
+    await h.clock.advance(300);
+    expect(items(h).filter((i) => i.name === "Read").map((i) => i.status)).toEqual(["running", "canceled"]);
+  });
+
+  it("duplicate id pending at once fails the turn", async () => {
+    const h = await setup(group([t({ id: "p" }), t({ id: "p" })]));
+    await h.send(prompt("s1", "go"));
+    expect(cards(h).map((c) => c.id)).toEqual(["p"]);
+    const end = h.events.filter((e: any) => e.type === "session.turn").at(-1) as any;
+    expect(end).toMatchObject({ state: "failed", error: { code: "E_SCRIPT_RUNTIME" } });
+  });
+});
