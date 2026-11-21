@@ -58,5 +58,8 @@
     "mock",
     "scripted",
     "e2e"
-  ]
+  ],
+  "overrides": {
+    "open": "^11.0.4"
+  }
 }
