@@ -43,20 +43,36 @@ interface Str {
   text: string;
 }
 
+function toolPreviewText(tool: unknown): string {
+  const parts: string[] = [];
+  const walk = (v: unknown, key?: string) => {
+    if (typeof v === "string") {
+      parts.push(key ? `${key}: ${v}` : v);
+    } else if (typeof v === "number" || typeof v === "boolean") {
+      parts.push(key ? `${key}: ${String(v)}` : String(v));
+    } else if (Array.isArray(v)) {
+      for (const item of v) walk(item);
+    } else if (v && typeof v === "object") {
+      for (const [k, val] of Object.entries(v)) walk(val, k);
+    }
+  };
+  walk(tool);
+  return parts.join(" · ");
+}
+
 function stringsOf(r: Reply): Str[] {
   const out: Str[] = [];
   if (r.expect !== undefined) out.push({ label: "You said", field: "expect", text: r.expect });
   if (r.reasoning !== undefined) out.push({ label: "Reasoning", field: "reasoning", text: r.reasoning });
-  // The whole tool spec (name, status, error, detail) is shown so the review and the confirm gate see
-  // every string that export writes.
-  for (const t of r.tools ?? []) out.push({ label: `Tool: ${t.name}`, text: JSON.stringify(t) });
+  // Format tool fields without JSON backslash escaping so Windows paths match the same rules as export.
+  for (const t of r.tools ?? []) out.push({ label: `Tool: ${t.name}`, text: toolPreviewText(t) });
   if (r.text !== undefined) out.push({ label: "Agent said", field: "text", text: r.text });
   (r.messages ?? []).forEach((t, i) => out.push({ label: `Agent message ${i + 1}`, field: `messages.${i}`, text: t }));
   // A recorded reply keeps its content in timed steps; show every string they carry.
   (r.steps ?? []).forEach((s, i) => {
     if (s.kind === "tool") {
       const name = s.tool?.name ?? "tool";
-      out.push({ label: `Tool: ${name}`, text: JSON.stringify(s.tool) });
+      out.push({ label: `Tool: ${name}`, text: toolPreviewText(s.tool) });
     } else {
       out.push({ label: s.kind === "reasoning" ? "Reasoning" : "Agent said", field: `steps.${i}.text`, text: s.text ?? "" });
     }

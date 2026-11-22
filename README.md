@@ -8,13 +8,39 @@
 
 # paseo-scripted-provider
 
-A [Paseo](https://paseo.sh) plugin that adds an agent backend called **Scripted**. It calls no model: it answers from a script you write, or from a script **recorded from a real session** (with secrets redacted).
+<p align="left">
+  <img src="assets/icon.png" alt="Scripted Provider icon" width="72" align="left" style="margin-right: 16px;" />
+  <strong>A deterministic, model-free agent backend for <a href="https://paseo.sh">Paseo</a>.</strong><br/>
+  Reply from YAML/JSON scripts, test real permission cards and streaming timelines, record live agent sessions with automatic secret redaction, and run isolated E2E tests in CI — with zero LLM calls and zero API keys.
+</p>
 
-Use it to
+<br clear="left"/>
 
-- **test your own Paseo plugin by hand**: see exactly how your UI reacts to a long reply, a streamed reply, a failed or canceled turn, tool calls, a reply split into several messages;
-- **run deterministic, free, repeatable end-to-end tests in CI** against a real Paseo daemon (a cross-platform [testkit](#testkit) is included);
-- **reproduce a bug report**: record the session, redact it, replay it anywhere with no API key.
+## Why Scripted Provider?
+
+Testing agentic UIs, permission-automation plugins, and CI pipelines against real LLMs is slow, flaky, and expensive. **Scripted Provider** gives you a first-class Paseo agent backend that behaves like a real agent — deterministically:
+
+- **Test plugins & Paseo UI by hand** — reproduce long outputs, chunked streaming, reasoning steps, tool failures, cancellations, and multi-button permission/question cards on demand.
+- **Record & redact real bug reports** — capture any live Claude, Codex, or OpenCode session into a replayable YAML/JSON script, review auto-redacted secrets (`{{secret_N}}`, `{{cwd}}`, `{{email_N}}`), and replay it anywhere with no API key.
+- **Run fast, repeatable CI against a real Paseo daemon** — use the companion [`paseo-scripted-provider-testkit`](#testkit) package to spin up isolated daemons on dynamic ports across Linux, macOS, and Windows.
+- **Safe by design** — tool calls (`tools[]`) are strictly display-only; nothing is ever executed on disk or in a shell.
+
+## Screenshots
+
+### Deterministic replies, tool calls & interactive permission cards
+Simulate streaming chunks, display-only tool calls, and real Paseo permission cards with custom actions and branching outcomes (`allow` / `deny` / `answer:<value>`):
+
+![Scripted agent running display-only tools and an interactive permission card](assets/demo-chat.png)
+
+### Record any session & review secret redaction
+Click **Record as script** (clapperboard icon) next to the composer on desktop/web to turn a real conversation into a timed script, confirm high-entropy tokens, and export YAML/JSON or click **Replay now**:
+
+![Record as script review screen with color-coded secret redaction](assets/demo-record-redact.png)
+
+### Live script editor & received-messages log
+Configure inline YAML/JSON scripts, external script files, prompt alignment (`warn` / `strict` / `ignore`), and inspect `received.jsonl` directly from **Settings → Scripted provider**:
+
+![Scripted provider settings screen](assets/demo-settings.png)
 
 ## Install
 
@@ -44,6 +70,20 @@ The daemon compiles the plugin itself; there is nothing to build.
 Open **Settings → Scripted provider** to paste your own script, point at a script file, set a log file for received messages, and see why a script was rejected (invalid scripts never break the provider; the built-ins stay available).
 
 Slash commands (conveniences over normal messages): `/scripted-next` sends `(next)` to advance one step; `/scripted-reset [scenario]` sends `SCENARIO:<scenario or current model>`.
+
+### Built-in scenarios
+
+Out of the box (even with an empty inline script), these scenarios are always available:
+
+| Scenario | Behavior |
+|---|---|
+| `default` | Single plain reply (`"plain default reply"`) |
+| `chat` | Multi-turn conversation (3 steps, repeats the last) |
+| `long-output` | 200-line output for testing scrollback and rendering |
+| `slow-stream` | Streams chunks with `400ms` delay between pieces |
+| `tools-demo` | Completed `Bash` (`exitCode: 0`) + failed `Edit` (`conflict`) + summary text |
+| `fail` | Delays `300ms` with partial text, then ends with `outcome: failed` |
+| `cancel` | Ends immediately with `outcome: canceled` |
 
 ## Script format
 
@@ -247,8 +287,6 @@ scenarios:
 
 The file and the inline script in settings are merged (inline wins), so *Replay now* never hides your script file.
 
-Known limitation: inside a recorded turn, tool calls are replayed before the messages (their relative order is not preserved).
-
 ## Testkit
 
 [`testkit/`](testkit/) is a Node-only (no shell, Windows-safe) helper package (`paseo-scripted-provider-testkit`) to start an isolated daemon, install this plugin and drive agents in CI or unit tests. See [`e2e/scripted.e2e.test.mjs`](e2e/scripted.e2e.test.mjs) for a complete example.
@@ -276,11 +314,11 @@ It picks a free port, uses a temp `--home` plus fake `HOME`/`USERPROFILE`, disab
 
 | Paseo | Status |
 |---|---|
-| 0.11.x, 0.12.x (tested on 0.11.4 and 0.12.0) | supported |
+| 0.11.x – 0.16.x (tested in CI against 0.16.2) | supported |
 | newer versions | allowed by the version range, not guaranteed |
 | other | not tested |
 
-The provider protocol is an internal Paseo interface and may change between versions. CI runs the real-daemon e2e on Ubuntu, macOS and Windows against the pinned Paseo version (0.12.0).
+The provider protocol is an internal Paseo interface and may change between versions. CI runs the real-daemon e2e on Ubuntu, macOS and Windows against the pinned Paseo version (`0.16.2`).
 
 Plugin layout follows the daemon's rules: `server/` (Node-only code), `shared/` (platform-neutral, also bundled for the client), `client/`.
 
@@ -290,7 +328,7 @@ Plugin layout follows the daemon's rules: `server/` (Node-only code), `shared/` 
 npm ci
 npm run typecheck
 npm test                 # unit + integration (vitest)
-npm run test:coverage    # + coverage gate (85% lines) → reports/
+npm run test:coverage    # + coverage gate (90% lines) → reports/
 npm ci --prefix testkit && npm run e2e     # real Paseo daemon
 npm run verify:real      # local only: real opencode / devin sessions → recording round-trip
 ```

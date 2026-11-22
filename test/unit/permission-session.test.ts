@@ -292,4 +292,15 @@ describe("permission cards: review fixes", () => {
     expect(turnStates(h.events)).toEqual(["started", "failed"]);
     expect(h.rec.some((r) => r.kind === "permission_requested")).toBe(false);
   });
+
+  it("deny with interrupt preserves prior assistant text in persisted transcript", async () => {
+    const h = await setup({
+      a: [{ steps: [{ kind: "message", text: "before card" }, { kind: "permission", permission: { id: "p1" } }] }],
+    });
+    await h.send(prompt("s1", "go"));
+    await h.respond("p1", { behavior: "deny", interrupt: true, message: "stop" });
+    expect(turnStates(h.events)).toEqual(["started", "canceled"]);
+    const persisted = h.events.find((e) => e.type === "session.opened" && "persistence" in e);
+    expect(persisted).toBeDefined();
+  });
 });

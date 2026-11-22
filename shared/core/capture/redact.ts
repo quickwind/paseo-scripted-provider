@@ -28,7 +28,10 @@ export const DEFAULT_RULES: Rule[] = [
   { id: "pem", kind: "secret", label: "PEM private key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/ },
   { id: "github", kind: "secret", label: "GitHub token", pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b/ },
   { id: "openai", kind: "secret", label: "API key (sk-)", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
-  { id: "aws", kind: "secret", label: "AWS access key", pattern: /\bAKIA[0-9A-Z]{16}\b/ },
+  { id: "aws", kind: "secret", label: "AWS access key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { id: "google", kind: "secret", label: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { id: "npm", kind: "secret", label: "npm token", pattern: /\bnpm_[A-Za-z0-9]{36,}\b/ },
+  { id: "gitlab", kind: "secret", label: "GitLab token", pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/ },
   { id: "slack", kind: "secret", label: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/ },
   { id: "jwt", kind: "secret", label: "JWT", pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
   { id: "bearer", kind: "secret", label: "Bearer token", pattern: /\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/, group: 1 },
@@ -46,6 +49,15 @@ interface Candidate {
   rule: Rule;
   priority: number;
 }
+
+const HAS_INDICES = (() => {
+  try {
+    new RegExp("", "d");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -100,12 +112,24 @@ export function createRedactor(rules: Rule[] = DEFAULT_RULES, ctx: { cwd?: strin
     const out: Candidate[] = [];
     const all = [...leading.map((r) => ({ r, p: r.id === "cwd" ? 0 : 1 })), ...rules.map((r, i) => ({ r, p: 2 + i }))];
     for (const { r, p } of all) {
-      const re = new RegExp(r.pattern.source, `g${r.pattern.flags.replace(/[gd]/g, "")}d`);
+      const flags = `g${r.pattern.flags.replace(/[gd]/g, "")}${HAS_INDICES ? "d" : ""}`;
+      const re = new RegExp(r.pattern.source, flags);
       for (const m of text.matchAll(re)) {
         const g = r.group ?? 0;
-        const span = (m as unknown as { indices: ([number, number] | undefined)[] }).indices[g];
-        if (!span || span[1] <= span[0]) continue;
-        out.push({ start: span[0], end: span[1], value: text.slice(span[0], span[1]), rule: r, priority: p });
+        let start = -1;
+        let end = -1;
+        if (HAS_INDICES) {
+          const span = (m as unknown as { indices: ([number, number] | undefined)[] }).indices[g];
+          if (span) [start, end] = span;
+        } else if (m.index !== undefined && m[g] !== undefined) {
+          const rel = g === 0 ? 0 : m[0].indexOf(m[g]);
+          if (rel >= 0) {
+            start = m.index + rel;
+            end = start + m[g].length;
+          }
+        }
+        if (start < 0 || end <= start) continue;
+        out.push({ start, end, value: text.slice(start, end), rule: r, priority: p });
       }
     }
     return out;
@@ -183,7 +207,7 @@ export function createRedactor(rules: Rule[] = DEFAULT_RULES, ctx: { cwd?: strin
   function suspicious(text: string): string[] {
     const spans = candidates(text);
     const found = new Set<string>();
-    for (const m of text.matchAll(/[A-Za-z0-9_+-]{24,}={0,2}/g)) {
+    for (const m of text.matchAll(/[A-Za-z0-9_+/\-]{24,}={0,2}/g)) {
       const tok = m[0];
       const start = m.index ?? 0;
       const end = start + tok.length;
@@ -192,9 +216,9 @@ export function createRedactor(rules: Rule[] = DEFAULT_RULES, ctx: { cwd?: strin
       if (!/[0-9]/.test(tok) || !/[A-Za-z]/.test(tok)) continue;
       if (/^\d{4}-\d{2}-\d{2}/.test(tok)) continue; // dates and dated file names
       if (/^(?:toolu|msg|call|req|run|chatcmpl)[_-]/.test(tok)) continue; // API object ids, not credentials
-      const parts = tok.split(/[-_]/);
+      const parts = tok.split(/[/\-_]/).filter(Boolean);
       const wordish = parts.filter((p) => /^[a-z]{3,}$/.test(p) || /^\d+$/.test(p) || /^v\d+$/.test(p)).length;
-      if (parts.length >= 2 && wordish / parts.length >= 0.5) continue; // slugs, file names, identifiers
+      if (parts.length >= 2 && wordish / parts.length >= 0.5) continue; // paths, slugs, file names, identifiers
       if (entropy(tok) >= 3.5) found.add(tok);
     }
     return [...found];

@@ -9,6 +9,7 @@ import { ScriptedSession, type Persisted } from "./session";
 export interface ProviderDeps {
   getScript(): Script;
   getConfig(): ResolvedConfig;
+  ready?: () => Promise<void>;
   clock?: Clock;
   newId?: NewId;
   recorder?(file?: string): Recorder;
@@ -51,14 +52,15 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
             emit({ type: "sessions", requestId: input.requestId, sessions: [] });
             return;
           case "session.open": {
+            sessions.get(input.sessionId)?.dispose();
             const restored = (input.persistence?.data ?? null) as Persisted | null;
             const s = new ScriptedSession({
               sessionId: input.sessionId,
               script: deps.getScript,
               clock,
               newId,
-              recorder,
-              alignment: cfg.alignment,
+              recorder: () => mkRecorder(deps.getConfig().recordFile),
+              alignment: () => deps.getConfig().alignment,
               emit,
               persisted: restored ?? undefined,
               initialScenario: input.config.model ?? undefined,
@@ -132,6 +134,7 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
         capabilities: ["prompt.message", "session.persistence", "permission"],
         async send(input) {
           try {
+            await deps.ready?.();
             handle(input);
           } catch (error) {
             console.error("[scripted-provider] handle failed", error);

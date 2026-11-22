@@ -153,6 +153,20 @@ describe("fewer false alarms (user report: 44 suspicious items)", () => {
   it("still flags random-looking secrets with separators", () => {
     expect(createRedactor().suspicious("pw=aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY")).toEqual(["aB3dE9fG2hJ6kL1mN5pQ8rS4tU7vW0xY"]);
     expect(createRedactor().suspicious("k=Zq8XrT2mKp7-LwR4vB8nT1yH6cD0sFgUa")).toHaveLength(1);
+    expect(createRedactor().suspicious("aws_secret=wJalrXUtnFEMI/K7MDENG/bPxRfiCY9xK2EXAMPLE")).toEqual([
+      "wJalrXUtnFEMI/K7MDENG/bPxRfiCY9xK2EXAMPLE",
+    ]);
+  });
+
+  it("redacts AWS temp keys, Google API keys, npm tokens, and GitLab PATs", () => {
+    const r = createRedactor();
+    const text = [
+      "ASIAIOSFODNN7EXAMPLE",
+      "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe",
+      "npm_1234567890abcdef1234567890abcdef1234",
+      "glpat-1234567890abcdefghij",
+    ].join(" ");
+    expect(r.apply(text)).toBe("{{secret_1}} {{secret_2}} {{secret_3}} {{secret_4}}");
   });
 });
 

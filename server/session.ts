@@ -13,13 +13,15 @@ export interface Persisted {
   transcript: { id: string; type: "user_message" | "assistant_message"; text: string }[];
 }
 
+export type Alignment = "warn" | "strict" | "ignore";
+
 export interface SessionDeps {
   sessionId: string;
   script: () => Script;
   clock: Clock;
   newId: NewId;
-  recorder: Recorder;
-  alignment: "warn" | "strict" | "ignore";
+  recorder: Recorder | (() => Recorder);
+  alignment: Alignment | (() => Alignment);
   emit: (e: ProviderEvent) => void;
   persisted?: Persisted;
   initialScenario?: string;
@@ -89,8 +91,18 @@ export class ScriptedSession {
     return this.transcript;
   }
 
+  private getRecorder(): Recorder {
+    return typeof this.d.recorder === "function" ? this.d.recorder() : this.d.recorder;
+  }
+
+  private getAlignment(): Alignment {
+    return typeof this.d.alignment === "function" ? this.d.alignment() : this.d.alignment;
+  }
+
   prompt(p: ProviderPrompt): void {
-    const { emit, recorder } = this.d;
+    const { emit } = this.d;
+    const recorder = this.getRecorder();
+    const alignment = this.getAlignment();
     const sid = this.d.sessionId;
     const text = promptText(p);
     const m = /^SCENARIO:([\w-]+)/.exec(text.trim());
@@ -101,7 +113,7 @@ export class ScriptedSession {
     const script = this.d.script();
     const scenario = this.scenario ?? "default";
     // warn (default): answer by content when the script has recorded `expect`s; strict/ignore: by order.
-    const step = this.d.alignment === "warn" && !m ? matchStep(script, scenario, this.step, text) : this.step;
+    const step = alignment === "warn" && !m ? matchStep(script, scenario, this.step, text) : this.step;
     const { reply } = resolveReply(script, scenario, step);
     recorder.record("prompt", {
       sessionId: this.logicalId,
@@ -116,8 +128,8 @@ export class ScriptedSession {
       contentTypes: p.input.type === "message" ? p.input.content.map((c) => c.type) : ["command"],
     });
     if (reply.expect !== undefined && reply.expect.trim() !== text.trim()) {
-      recorder.record("mismatch", { sessionId: this.logicalId, step, expected: reply.expect, actual: text, mode: this.d.alignment });
-      if (this.d.alignment === "strict") {
+      recorder.record("mismatch", { sessionId: this.logicalId, step, expected: reply.expect, actual: text, mode: alignment });
+      if (alignment === "strict") {
         emit({
           type: "session.prompt_result",
           sessionId: sid,
@@ -167,12 +179,12 @@ export class ScriptedSession {
   respond(permissionId: string, response: PermissionResponse): void {
     const card = this.pending.get(permissionId);
     if (!card) {
-      this.d.recorder.record("permission_unknown", { sessionId: this.logicalId, permissionId });
+      this.getRecorder().record("permission_unknown", { sessionId: this.logicalId, permissionId });
       return;
     }
     this.pending.delete(permissionId);
     this.d.emit({ type: "session.permission_resolved", sessionId: this.d.sessionId, permissionId });
-    this.d.recorder.record("permission_response", {
+    this.getRecorder().record("permission_response", {
       sessionId: this.logicalId,
       permissionId,
       behavior: response.behavior,
@@ -186,7 +198,7 @@ export class ScriptedSession {
   }
 
   interrupt(requestId: string): void {
-    this.d.recorder.record("interrupt", { sessionId: this.logicalId, activeTurn: this.activeTurn });
+    this.getRecorder().record("interrupt", { sessionId: this.logicalId, activeTurn: this.activeTurn });
     if (this.turn) this.endTurn(this.turn.id, "canceled", "interrupted", undefined, "interrupted");
     this.d.emit({ type: "request.completed", requestId });
   }
@@ -226,7 +238,7 @@ export class ScriptedSession {
       if (card.turnId !== turnId) continue;
       this.pending.delete(permissionId);
       this.d.emit({ type: "session.permission_resolved", sessionId: this.d.sessionId, permissionId });
-      this.d.recorder.record("permission_canceled", { sessionId: this.logicalId, permissionId, reason });
+      this.getRecorder().record("permission_canceled", { sessionId: this.logicalId, permissionId, reason });
     }
     for (const [id, open] of [...this.openTools]) {
       if (open.turnId !== turnId) continue;
@@ -350,7 +362,7 @@ export class ScriptedSession {
     // turn has no card to resolve (and nothing invalid to emit again).
     this.d.emit({ type: "session.permission", sessionId: this.d.sessionId, request: request as never });
     this.pending.set(id, { turnId, spec, answer });
-    this.d.recorder.record("permission_requested", { sessionId: this.logicalId, permissionId: id, cardKind: request.kind, name: request.name, step: this.step - 1 });
+    this.getRecorder().record("permission_requested", { sessionId: this.logicalId, permissionId: id, cardKind: request.kind, name: request.name, step: this.step - 1 });
     return Promise.race([answered, this.turn!.aborted.then(() => null)]);
   }
 
@@ -371,8 +383,7 @@ export class ScriptedSession {
     if (!r || !this.live(turnId)) return "ended";
     if (r.behavior === "deny" && r.interrupt) {
       if (item && a.tool) this.closeTool(item, a.tool, "failed", r.message ?? "denied");
-      this.endTurn(turnId, "canceled", r.message ?? "denied", undefined, "interrupt_deny");
-      return "ended";
+      return this.finish(turnId, "canceled", r.message ?? "denied", ctx, "interrupt_deny");
     }
     if (item && a.tool) await this.settle(turnId, item, a.tool, r);
     if (!this.live(turnId)) return "ended";
@@ -419,7 +430,7 @@ export class ScriptedSession {
       answers[i] = r;
       if (r.behavior === "deny" && r.interrupt) {
         if (t) this.closeTool(t.item, t.spec, "failed", r.message ?? "denied");
-        this.endTurn(turnId, "canceled", r.message ?? "denied", undefined, "interrupt_deny");
+        this.finish(turnId, "canceled", r.message ?? "denied", ctx, "interrupt_deny");
         return;
       }
       if (t) await this.settle(turnId, t.item, t.spec, r);

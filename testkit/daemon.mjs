@@ -44,7 +44,7 @@ export function spawnSpecForCli(entry, args) {
 }
 
 /** Files of this repo that make up the installed plugin (no node_modules: the daemon compiles it). */
-const PLUGIN_FILES = ["paseo-plugin.json", "index.server.ts", "index.client.tsx", "client", "server", "shared"];
+const PLUGIN_FILES = ["paseo-plugin.json", "assets", "index.server.ts", "index.client.tsx", "client", "server", "shared"];
 
 export const BUILTIN_PROVIDERS = ["claude", "codex", "copilot", "opencode", "pi", "omp", "antigravity", "muse", "devin"];
 

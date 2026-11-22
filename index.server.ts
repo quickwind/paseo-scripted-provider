@@ -25,16 +25,17 @@ export default function contribute(server: PluginServerContext) {
   };
 
   const settings = server.registerSettings(scriptedSettings);
-  void settings.read().then((s) => {
+  const ready = settings.read().then((s) => {
     if (s.status === "ready") values = s.values;
-  });
+  }).catch(() => undefined);
   const unsubscribe = settings.subscribe((s) => {
     if (s.status === "ready") values = s.values;
   });
 
-  server.registerProvider(createScriptedProvider({ getScript: () => getBuilt().script, getConfig, recorder: (file) => createRecorder(file) }));
+  server.registerProvider(createScriptedProvider({ getScript: () => getBuilt().script, getConfig, ready: () => ready, recorder: (file) => createRecorder(file) }));
 
-  server.handle(getStatusRpc, () => {
+  server.handle(getStatusRpc, async () => {
+    await ready;
     const built = getBuilt();
     return { scenarios: scenarioNames(built.script), error: built.error, recordFile: getConfig().recordFile ?? null };
   });

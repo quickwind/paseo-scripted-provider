@@ -1,6 +1,12 @@
 {
   "id": "paseo-scripted-provider",
   "name": "Scripted Provider",
-  "description": "A Paseo agent backend that replies from a script instead of a model. Deterministic testing, plus record-a-session-as-a-script.",
+  "description": "Deterministic, model-free agent backend for Paseo. Replay YAML/JSON scripts, test permission cards & streaming, record real sessions with automatic secret redaction, and run isolated CI tests.",
+  "icon": "assets/icon.png",
+  "media": [
+    "assets/demo-chat.png",
+    "assets/demo-record-redact.png",
+    "assets/demo-settings.png"
+  ],
   "requirements": { "paseo": ">=0.11.0" }
 }
