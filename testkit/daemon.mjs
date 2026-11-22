@@ -1,4 +1,4 @@
-// Isolated temp workspace + Paseo daemon lifecycle. Cross-platform: no shell, every child process
+// Isolated temp workspace + Paseo daemon lifecycle. Cross-platform: no shell, every JS child process
 // is `process.execPath <script> ...` (the Paseo CLI bin shebang uses `env -S`, unusable on Windows).
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -13,13 +13,34 @@ export const TESTKIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(TESTKIT_DIR, "..");
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const require = createRequire(import.meta.url);
+const requireFromTestkit = createRequire(import.meta.url);
 
-export function cliEntry() {
-  const pkgJson = require.resolve("@getpaseo/cli/package.json");
+function resolvePackageJson(specifier) {
+  try {
+    return requireFromTestkit.resolve(specifier);
+  } catch {
+    const requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
+    return requireFromCwd.resolve(specifier);
+  }
+}
+
+export function cliEntry(override) {
+  if (override) {
+    const resolved = path.resolve(override);
+    if (!fs.existsSync(resolved)) throw new Error(`Custom Paseo CLI entry not found at ${resolved}`);
+    return resolved;
+  }
+  const pkgJson = resolvePackageJson("@getpaseo/cli/package.json");
   const entry = path.join(path.dirname(pkgJson), "dist", "index.js");
   if (!fs.existsSync(entry)) throw new Error(`Paseo CLI entry not found at ${entry}; run "npm ci --prefix testkit"`);
   return entry;
+}
+
+export function spawnSpecForCli(entry, args) {
+  if (/\.(c|m)?js$/i.test(entry)) {
+    return { command: process.execPath, args: [entry, ...args] };
+  }
+  return { command: entry, args };
 }
 
 /** Files of this repo that make up the installed plugin (no node_modules: the daemon compiles it). */
@@ -68,11 +89,12 @@ function tail(file, lines = 60) {
 }
 
 export class Workspace {
-  constructor({ keep = false, realHome = false } = {}) {
+  constructor({ keep = false, realHome = false, extraEnv = {} } = {}) {
     this.keep = keep;
     // realHome: keep the user's HOME/XDG dirs so real provider CLIs (opencode, devin, ...) find their own
     // configuration and login. Paseo's own home, port and plugin state stay isolated.
     this.realHome = realHome;
+    this.extraEnv = { ...extraEnv };
     // Canonical path: macOS tmpdir is behind /var -> /private/var and Windows runners report 8.3 names.
     this.root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "scripted-")));
     this.paseoHome = path.join(this.root, "paseo-home");
@@ -99,7 +121,7 @@ export class Workspace {
     return dest;
   }
 
-  env() {
+  env(overrides = {}) {
     const env = {};
     for (const [key, value] of Object.entries(process.env)) {
       const upper = key.toUpperCase();
@@ -126,18 +148,41 @@ export class Workspace {
       fs.mkdirSync(env.APPDATA, { recursive: true });
       fs.mkdirSync(env.LOCALAPPDATA, { recursive: true });
     }
+    for (const source of [this.extraEnv, overrides]) {
+      if (!source) continue;
+      for (const [key, value] of Object.entries(source)) {
+        if (value === undefined || value === null) delete env[key];
+        else env[key] = String(value);
+      }
+    }
     return env;
   }
 
-  collect(outDir) {
+  collect(outDir, extraCollect) {
     fs.mkdirSync(outDir, { recursive: true });
     const copy = (src, name) => {
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(outDir, name), { recursive: true });
+      if (src && fs.existsSync(src)) fs.cpSync(src, path.join(outDir, name), { recursive: true });
     };
     copy(this.logs, "daemon-stdout");
     copy(path.join(this.paseoHome, "daemon.log"), "paseo-daemon.log");
     copy(path.join(this.paseoHome, "config.json"), "paseo-config.json");
     copy(this.state, "plugin-state");
+
+    if (Array.isArray(extraCollect)) {
+      const used = new Map();
+      for (const src of extraCollect) {
+        if (!src || !fs.existsSync(src)) continue;
+        const base = path.basename(src);
+        const count = (used.get(base) ?? 0) + 1;
+        used.set(base, count);
+        const name = count === 1 ? base : `${base}-${count}`;
+        copy(src, path.join("extra", name));
+      }
+    } else if (extraCollect && typeof extraCollect === "object") {
+      for (const [name, src] of Object.entries(extraCollect)) {
+        copy(src, name);
+      }
+    }
   }
 
   cleanup() {
@@ -154,7 +199,7 @@ export class Workspace {
 }
 
 export class Daemon {
-  constructor(ws, { port, timeScale = 1, enableProviders = [], providerConfigs = {} }) {
+  constructor(ws, { port, timeScale = 1, enableProviders = [], providerConfigs = {}, extraEnv = {}, cliEntry: customCliEntry } = {}) {
     // providerConfigs: custom provider definitions (e.g. ACP providers) merged into agents.providers.
     this.providerConfigs = providerConfigs;
     this.ws = ws;
@@ -162,9 +207,19 @@ export class Daemon {
     this.host = `127.0.0.1:${port}`;
     this.timeScale = timeScale;
     this.enableProviders = enableProviders;
+    this.extraEnv = { ...extraEnv };
+    this.cliEntryPath = customCliEntry;
     this.child = null;
     this.logFile = null;
     this.starts = 0;
+  }
+
+  resolveCli() {
+    return cliEntry(this.cliEntryPath);
+  }
+
+  env() {
+    return this.ws.env(this.extraEnv);
   }
 
   writeConfig() {
@@ -192,8 +247,9 @@ export class Daemon {
   }
 
   cli(args, { timeoutMs = 60000, check = true } = {}) {
-    const res = spawnSync(process.execPath, [cliEntry(), ...args, "--home", this.ws.paseoHome], {
-      env: this.ws.env(),
+    const spec = spawnSpecForCli(this.resolveCli(), [...args, "--home", this.ws.paseoHome]);
+    const res = spawnSync(spec.command, spec.args, {
+      env: this.env(),
       cwd: this.ws.work,
       encoding: "utf8",
       timeout: timeoutMs,
@@ -211,8 +267,9 @@ export class Daemon {
     this.starts++;
     this.logFile = path.join(this.ws.logs, `${label}-${this.starts}.log`);
     const fd = fs.openSync(this.logFile, "a");
-    this.child = spawn(process.execPath, [cliEntry(), "daemon", "run", "--home", this.ws.paseoHome], {
-      env: this.ws.env(),
+    const spec = spawnSpecForCli(this.resolveCli(), ["daemon", "run", "--home", this.ws.paseoHome]);
+    this.child = spawn(spec.command, spec.args, {
+      env: this.env(),
       cwd: this.ws.work,
       stdio: ["ignore", fd, fd],
       windowsHide: true,
