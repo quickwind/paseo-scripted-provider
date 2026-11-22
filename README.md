@@ -6,6 +6,8 @@
 [![license: MIT](https://img.shields.io/github/license/quickwind/paseo-scripted-provider)](LICENSE)
 [![Paseo](https://img.shields.io/badge/paseo-%3E%3D0.11.0-blue)](#compatibility)
 
+**Language:** English | [简体中文](README.zh-CN.md)
+
 # paseo-scripted-provider
 
 <p align="left">

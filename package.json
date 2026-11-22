@@ -18,6 +18,7 @@
   "type": "module",
   "files": [
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "paseo-plugin.json",
     "assets/",
