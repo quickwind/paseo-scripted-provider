@@ -16,6 +16,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const REQUIRED_PLUGIN_FILES = [
   "package.json",
   "paseo-plugin.json",
+  "assets/icon.png",
+  "assets/demo-chat.png",
+  "assets/demo-record-redact.png",
+  "assets/demo-settings.png",
   "index.server.ts",
   "index.client.tsx",
   "README.md",

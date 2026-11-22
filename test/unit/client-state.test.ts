@@ -157,4 +157,17 @@ describe("exportText format", () => {
     expect(text.trimStart().startsWith("{")).toBe(false);
     expect(parseScript(text).ok).toBe(true);
   });
+
+  it("redacts Windows user paths in tool preview consistently with export", () => {
+    const winEntries: TimelineEntry[] = [
+      { item: { type: "user_message", text: "open file" } },
+      { item: { type: "tool_call", name: "Read", detail: { type: "read", filePath: "C:\\Users\\alice\\repo\\app.ts" } } },
+      { item: { type: "assistant_message", id: "m1", text: "done" } },
+    ];
+    const m = buildReview(winEntries, opts, { cwd: "C:\\Users\\alice\\repo" });
+    const views = stepsView(m);
+    const toolPart = views[0].parts.find((p) => p.label === "Tool: Read");
+    expect(toolPart?.segments.map((s) => s.text).join("")).toContain("{{cwd}}\\app.ts");
+    expect(exportText(m)).toContain("{{cwd}}");
+  });
 });

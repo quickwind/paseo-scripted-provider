@@ -8,14 +8,22 @@
     "type": "git",
     "url": "git+https://github.com/quickwind/paseo-scripted-provider.git"
   },
+  "homepage": "https://github.com/quickwind/paseo-scripted-provider#readme",
+  "bugs": {
+    "url": "https://github.com/quickwind/paseo-scripted-provider/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
   "type": "module",
   "files": [
     "README.md",
+    "README.zh-CN.md",
+    "OVERVIEW.md",
+    "OVERVIEW.zh-CN.md",
     "LICENSE",
     "paseo-plugin.json",
+    "assets/",
     "index.server.ts",
     "index.client.tsx",
     "client/",

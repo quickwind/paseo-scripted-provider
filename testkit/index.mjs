@@ -194,7 +194,8 @@ export async function startScriptedEnv({
 } = {}) {
   const ws = new Workspace({ keep, realHome, extraEnv });
   const daemon = new Daemon(ws, { port: await freePort(), timeScale, enableProviders, providerConfigs, cliEntry: customCliEntry });
-  process.once("exit", () => daemon.killNow());
+  const onExit = () => daemon.killNow();
+  process.once("exit", onExit);
   if (script) fs.writeFileSync(ws.scriptFile, JSON.stringify(script, null, 2));
 
   let conn;
@@ -266,6 +267,7 @@ export async function startScriptedEnv({
       throw new Error("could not reconnect after restart");
     },
     async stop({ outDir, extraCollect: stopExtraCollect } = {}) {
+      process.off("exit", onExit);
       await env.conn.client.close().catch(() => undefined);
       await daemon.stop().catch((e) => console.warn(`[testkit] stop failed: ${e}`));
       if (outDir) ws.collect(outDir, mergeExtraCollect(extraCollect, stopExtraCollect));

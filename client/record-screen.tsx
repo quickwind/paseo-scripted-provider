@@ -1,7 +1,7 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, copyText, useToast } from "@getpaseo/plugin/client/react-native";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View, useWindowDimensions, type ScrollView as NativeScrollView } from "react-native";
 import type { ConvertOptions, TimelineEntry } from "../shared/core/capture/convert";
 import { safeScenarioName, scriptFilename, type ScriptFormat } from "../shared/core/capture/script-format";
@@ -67,7 +67,26 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   const stepY = useRef<Record<number, number>>({});
   const partY = useRef<Record<string, number>>({});
 
-  const items = useMemo(() => (model ? reviewItems(model) : []), [model, version]);
+  const timers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const keepAllTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const later = (fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timers.current.delete(id);
+      fn();
+    }, ms);
+    timers.current.add(id);
+    return id;
+  };
+  useEffect(() => () => {
+    for (const id of timers.current) clearTimeout(id);
+    timers.current.clear();
+    if (keepAllTimer.current) clearTimeout(keepAllTimer.current);
+  }, []);
+
+  const { views, items } = useMemo(() => {
+    if (!model) return { views: [], items: [] };
+    return { views: stepsView(model), items: reviewItems(model) };
+  }, [model, version]);
   const confirms = items.filter((i) => i.kind === "confirm");
   const replaced = items.filter((i) => i.kind === "replaced");
   const list = tab === "confirm" ? confirms : replaced;
@@ -98,7 +117,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     if (how === "redact") redactSelection(model, item.value);
     setModel(confirmSuspicious(model, item.value));
     rerender();
-    if (next) setTimeout(() => locate(next), 0);
+    if (next) later(() => locate(next), 0);
     else setActiveKey(null);
   };
 
@@ -106,8 +125,16 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     if (!model || pending === 0) return;
     if (how === "keep" && !armKeepAll) {
       setArmKeepAll(true);
-      setTimeout(() => setArmKeepAll(false), 4000);
+      if (keepAllTimer.current) clearTimeout(keepAllTimer.current);
+      keepAllTimer.current = setTimeout(() => {
+        keepAllTimer.current = null;
+        setArmKeepAll(false);
+      }, 4000);
       return;
+    }
+    if (keepAllTimer.current) {
+      clearTimeout(keepAllTimer.current);
+      keepAllTimer.current = null;
     }
     setArmKeepAll(false);
     setModel(resolveAll(model, how));
@@ -142,50 +169,60 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
   };
 
   const doExport = async function doExport() {
-    if (!model || !canExport(model)) return;
-    let text: string;
+    if (busy || !model || !canExport(model)) return;
+    setBusy(true);
     try {
-      // The daemon owns the YAML parser, so the client bundle never ships it.
-      text = (await exportScriptRpcCall({ script: exportScript(model), format })).text;
-    } catch (e) {
-      toast.error(t("record.serializeFailed", { error: e instanceof Error ? e.message : String(e) }));
-      return;
-    }
-    if (canDownload) {
-      downloadFile(scriptFilename(model.name, new Date(), format), text, format === "yaml" ? "application/yaml;charset=utf-8" : undefined);
-      toast.show(t("record.downloaded"));
-    } else {
-      await copyText(text);
-      toast.show(t("record.copied"));
+      let text: string;
+      try {
+        // The daemon owns the YAML parser, so the client bundle never ships it.
+        text = (await exportScriptRpcCall({ script: exportScript(model), format })).text;
+      } catch (e) {
+        toast.error(t("record.serializeFailed", { error: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
+      if (canDownload) {
+        downloadFile(scriptFilename(model.name, new Date(), format), text, format === "yaml" ? "application/yaml;charset=utf-8" : undefined);
+        toast.show(t("record.downloaded"));
+      } else {
+        await copyText(text);
+        toast.show(t("record.copied"));
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
   const doReplay = async function doReplay() {
-    if (!model || !canExport(model)) return;
+    if (busy || !model || !canExport(model)) return;
     if (settings.status !== "ready") return toast.error(t("record.settingsNotLoaded"));
-    let merged: { ok: boolean; text?: string; name?: string; error?: string };
+    setBusy(true);
     try {
-      merged = await mergeScenarioRpcCall({
-        script: exportScript(model),
-        name: model.name,
-        existingText: settings.values.scripts,
-      });
-    } catch (e) {
-      toast.error(t("record.buildFailed", { error: e instanceof Error ? e.message : String(e) }));
-      return;
-    }
-    if (!merged.ok || !merged.text || !merged.name) return toast.error(t("record.existingInvalid", { error: merged.error ?? t("record.unknownError") }));
-    if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error(t("record.saveFailed"));
-    try {
-      const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: t("record.replayTitle", { name: merged.name }) };
-      // Create inside the recorded conversation's workspace; a bare cwd would make the host open a new workspace.
-      const created = workspaceId
-        ? await paseo.workspaces.ref(workspaceId).agents.create(agentOptions)
-        : await paseo.agents.create({ cwd: cwd ?? ".", ...agentOptions });
-      toast.show(t("record.replayCreated", { name: merged.name }));
-      navigation?.openAgent({ agentId: created.id });
-    } catch (e) {
-      toast.error(t("record.replayAgentFailed", { name: merged.name, error: e instanceof Error ? e.message : String(e) }));
+      let merged: { ok: boolean; text?: string; name?: string; error?: string };
+      try {
+        merged = await mergeScenarioRpcCall({
+          script: exportScript(model),
+          name: model.name,
+          existingText: settings.values.scripts,
+        });
+      } catch (e) {
+        toast.error(t("record.buildFailed", { error: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
+      if (!merged.ok || !merged.text || !merged.name) return toast.error(t("record.existingInvalid", { error: merged.error ?? t("record.unknownError") }));
+      if (!(await settings.save({ ...settings.values, scripts: merged.text }, settings.revision))) return toast.error(t("record.saveFailed"));
+      try {
+        const agentOptions = { config: { provider: `scripted/${merged.name}` }, title: t("record.replayTitle", { name: merged.name }) };
+        // Create inside the recorded conversation's workspace; a bare cwd would make the host open a new workspace.
+        const created = workspaceId
+          ? await paseo.workspaces.ref(workspaceId).agents.create(agentOptions)
+          : await paseo.agents.create({ cwd: cwd ?? ".", ...agentOptions });
+        toast.show(t("record.replayCreated", { name: merged.name }));
+        navigation?.openAgent({ agentId: created.id });
+      } catch (e) {
+        toast.error(t("record.replayAgentFailed", { name: merged.name, error: e instanceof Error ? e.message : String(e) }));
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -240,12 +277,11 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
     );
   }
 
-  const views = stepsView(model);
   const mainHeight = Math.max(360, height - 230);
   const activeValue = active?.value;
 
   const renderPlain = (text: string, suspicious: string[], key: string) => {
-    const toks = suspicious.filter((t) => text.includes(t));
+    const toks = suspicious.filter((tok) => text.includes(tok));
     if (toks.length === 0) return <Text key={key}>{text}</Text>;
     const pieces = text.split(new RegExp(`(${toks.map(escapeRe).join("|")})`));
     return (
@@ -289,7 +325,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
         {btn(t("record.back"), () => setModel(null))}
         {/* Split button: the main part exports, the small arrow picks the format (YAML by default). */}
         <View style={{ flexDirection: "row" }}>
-          <Pressable disabled={pending > 0} onPress={() => void doExport()} style={[styles.splitMain, { borderColor: colors.border, backgroundColor: colors.accent, opacity: pending > 0 ? 0.4 : 1 }]}>
+          <Pressable disabled={busy || pending > 0} onPress={() => void doExport()} style={[styles.splitMain, { borderColor: colors.border, backgroundColor: colors.accent, opacity: busy || pending > 0 ? 0.4 : 1 }]}>
             <Text style={{ color: colors.accentForeground }}>{canDownload ? t("record.download", { format }) : t("record.copy", { format: format.toUpperCase() })}</Text>
           </Pressable>
           <View ref={arrowRef} collapsable={false}>
@@ -298,7 +334,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
             </Pressable>
           </View>
         </View>
-        {btn(t("record.replayNow"), () => void doReplay(), { disabled: pending > 0 })}
+        {btn(t("record.replayNow"), () => void doReplay(), { disabled: busy || pending > 0 })}
       </View>
 
       <View style={[styles.row, { marginTop: 8 }]}>
@@ -345,7 +381,7 @@ export const RecordScreen: React.FC<PluginScreenProps> = ({ params, theme, layou
                     <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{p.label}</Text>
                     {isEditing ? (
                       <View style={styles.col}>
-                        <TextInput multiline value={editing.text} onChangeText={(t) => setEditing((cur) => (cur ? { ...cur, text: t } : cur))} onSelectionChange={(e) => { const { start, end } = e.nativeEvent.selection; setEditing((cur) => (cur ? { ...cur, sel: cur.text.slice(start, end) } : cur)); }} style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface1 }]} />
+                        <TextInput multiline value={editing.text} onChangeText={(val) => setEditing((cur) => (cur ? { ...cur, text: val } : cur))} onSelectionChange={(e) => { const { start, end } = e.nativeEvent.selection; setEditing((cur) => (cur ? { ...cur, sel: cur.text.slice(start, end) } : cur)); }} style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface1 }]} />
                         <View style={styles.row}>
                           {btn(t("record.redactSelection"), () => { if (editing.sel) { redactSelection(model, editing.sel); rerender(); } }, { disabled: !editing.sel })}
                           {btn(t("settings.save"), () => { setModel(editStep(model, step.index, editing.field, editing.text)); setEditing(null); }, { primary: true })}
