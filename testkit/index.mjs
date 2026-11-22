@@ -130,7 +130,7 @@ export async function connectClient(daemon, { appVersion } = {}) {
   return { client, api: createPaseoApi(client) };
 }
 
-export function createAgentHelpers({ getApi, ms = (v) => v, timeline }) {
+export function createAgentHelpers({ getApi, ms = (v) => v, timeline, readRecord }) {
   async function assistantTexts(agentId) {
     return (await timeline(agentId))
       .filter((e) => e.item?.type === "assistant_message")
@@ -174,16 +174,50 @@ export function createAgentHelpers({ getApi, ms = (v) => v, timeline }) {
     throw new Error(`Timed out after ${limitMs}ms waiting for assistant texts (${desc}); last seen: ${JSON.stringify(last)}`);
   }
 
-  return { assistantTexts, waitForPermission, respondToPermission, waitForAssistantTexts };
+  async function waitForRecord(predicate, { timeoutMs = 10000, pollMs = 50 } = {}) {
+    if (typeof readRecord !== "function") throw new Error("waitForRecord requires readRecord");
+    const limitMs = ms(timeoutMs);
+    const deadline = Date.now() + limitMs;
+    let last = [];
+    while (Date.now() < deadline) {
+      last = readRecord();
+      const match = last.find(predicate);
+      if (match !== undefined) return match;
+      await sleep(pollMs);
+    }
+    throw new Error(`Timed out after ${limitMs}ms waiting for matching record; saw ${last.length} entries`);
+  }
+
+  async function waitForTimeline(agentId, predicate, { timeoutMs = 15000, pollMs = 50 } = {}) {
+    const limitMs = ms(timeoutMs);
+    const deadline = Date.now() + limitMs;
+    let last = [];
+    while (Date.now() < deadline) {
+      last = await timeline(agentId);
+      const match = last.find(predicate);
+      if (match !== undefined) return match;
+      await sleep(pollMs);
+    }
+    throw new Error(`Timed out after ${limitMs}ms waiting for matching timeline entry on ${agentId}; saw ${last.length} entries`);
+  }
+
+  async function steer(agentId, prompt, options = {}) {
+    const ref = getApi().agents.ref(agentId);
+    return ref.send(prompt, { activeTurnBehavior: "steer", ...options });
+  }
+
+  return { assistantTexts, waitForPermission, respondToPermission, waitForAssistantTexts, waitForRecord, waitForTimeline, steer };
 }
 
 export async function startScriptedEnv({
   script,
   enableProviders = [],
   timeScale = Number(process.env.E2E_TIME_SCALE ?? 1),
+  delayScale,
   keep = false,
   realHome = false,
   providerConfigs = {},
+  daemonConfig = {},
   pluginSource = "local",
   pluginVersion = "",
   extraPlugins = [],
@@ -192,8 +226,19 @@ export async function startScriptedEnv({
   cliEntry: customCliEntry,
   appVersion,
 } = {}) {
-  const ws = new Workspace({ keep, realHome, extraEnv });
-  const daemon = new Daemon(ws, { port: await freePort(), timeScale, enableProviders, providerConfigs, cliEntry: customCliEntry });
+  const mergedExtraEnv = {
+    ...extraEnv,
+    ...(delayScale !== undefined ? { SCRIPTED_PROVIDER_DELAY_SCALE: String(delayScale) } : {}),
+  };
+  const ws = new Workspace({ keep, realHome, extraEnv: mergedExtraEnv });
+  const daemon = new Daemon(ws, {
+    port: await freePort(),
+    timeScale,
+    enableProviders,
+    providerConfigs,
+    daemonConfig,
+    cliEntry: customCliEntry,
+  });
   const onExit = () => daemon.killNow();
   process.once("exit", onExit);
   if (script) fs.writeFileSync(ws.scriptFile, JSON.stringify(script, null, 2));
@@ -226,7 +271,8 @@ export async function startScriptedEnv({
     const page = await env.api.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 300, projection: "projected" });
     return page.entries ?? [];
   };
-  const helpers = createAgentHelpers({ getApi: () => env.api, ms, timeline });
+  const readRecord = () => readJsonl(ws.recordFile);
+  const helpers = createAgentHelpers({ getApi: () => env.api, ms, timeline, readRecord });
 
   const env = {
     ws,
@@ -236,11 +282,46 @@ export async function startScriptedEnv({
       return env.conn.api;
     },
     ms,
-    readRecord: () => readJsonl(ws.recordFile),
-    async createAgent({ scenario = "default", prompt, title } = {}) {
+    readRecord,
+    setScript(nextScript) {
+      const content = typeof nextScript === "string" ? nextScript : JSON.stringify(nextScript, null, 2);
+      fs.writeFileSync(ws.scriptFile, content);
+    },
+    async createAgent({
+      scenario = "default",
+      prompt,
+      title,
+      cwd,
+      workspaceId,
+      mode,
+      modeId,
+      thinkingOption,
+      thinkingOptionId,
+      providerOptions,
+      options,
+      mcpServers,
+      toolPolicy,
+      env: agentEnv,
+      systemPrompt,
+      config: extraConfig,
+    } = {}) {
+      const resolvedModeId = modeId ?? mode;
+      const resolvedThinkingOptionId = thinkingOptionId ?? thinkingOption;
+      const resolvedOptions = options ?? providerOptions;
       return env.api.agents.create({
-        config: { provider: `scripted/${scenario}` },
-        cwd: ws.work,
+        config: {
+          provider: `scripted/${scenario}`,
+          ...(resolvedModeId !== undefined ? { modeId: resolvedModeId } : {}),
+          ...(resolvedThinkingOptionId !== undefined ? { thinkingOptionId: resolvedThinkingOptionId } : {}),
+          ...(resolvedOptions !== undefined ? { options: resolvedOptions } : {}),
+          ...(mcpServers !== undefined ? { mcpServers } : {}),
+          ...(toolPolicy !== undefined ? { toolPolicy } : {}),
+          ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+          ...extraConfig,
+        },
+        cwd: cwd ?? ws.work,
+        ...(agentEnv !== undefined ? { env: agentEnv } : {}),
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
         title: title ?? `scripted ${scenario}`,
         ...(prompt ? { prompt, clientMessageId: randomUUID() } : {}),
       });
@@ -253,6 +334,9 @@ export async function startScriptedEnv({
     waitForPermission: helpers.waitForPermission,
     respondToPermission: helpers.respondToPermission,
     waitForAssistantTexts: helpers.waitForAssistantTexts,
+    waitForRecord: helpers.waitForRecord,
+    waitForTimeline: helpers.waitForTimeline,
+    steer: helpers.steer,
     async restart(label = "restart") {
       await env.conn.client.close().catch(() => undefined);
       await daemon.restart(label);

@@ -8,5 +8,5 @@
     "assets/demo-record-redact.png",
     "assets/demo-settings.png"
   ],
-  "requirements": { "paseo": ">=0.11.0" }
+  "requirements": { "paseo": ">=0.12.0" }
 }

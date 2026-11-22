@@ -1,10 +1,30 @@
-import type { ProviderEvent, ProviderInput, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { ProviderConnectRequest, ProviderEvent, ProviderInput, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { realClock, type Clock, type NewId } from "../shared/core/clock";
 import type { ResolvedConfig } from "../shared/core/config-types";
 import { nullRecorder, type Recorder } from "../shared/core/recorder";
 import type { Script } from "../shared/core/schema";
 import { scenarioNames } from "../shared/core/script";
 import { ScriptedSession, type Persisted } from "./session";
+
+export const SUPPORTED_CAPABILITIES = [
+  "prompt.message",
+  "prompt.command",
+  "prompt.steer",
+  "session.persistence",
+  "session.configure",
+  "session.can_stop_runtime",
+  "permission",
+  "timeline.plugin",
+] as const;
+
+/** Intersects our capabilities with what the host daemon offers so older daemons never see unknown strings. */
+export function negotiateCapabilities(
+  offered: readonly string[] | undefined,
+  supported: readonly string[] = SUPPORTED_CAPABILITIES,
+): string[] {
+  if (!Array.isArray(offered)) return [...supported];
+  return supported.filter((c) => offered.includes(c));
+}
 
 export interface ProviderDeps {
   getScript(): Script;
@@ -24,7 +44,8 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
     id: "scripted",
     label: "Scripted",
     description: "Replies from a script instead of a model (testing and demos).",
-    async connect() {
+    async connect(request?: ProviderConnectRequest) {
+      const negotiated = negotiateCapabilities(request?.capabilities);
       const listeners = new Set<(e: ProviderEvent) => void>();
       const emit = (e: ProviderEvent) => {
         for (const l of listeners) l(e);
@@ -36,14 +57,18 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
         const recorder = mkRecorder(cfg.recordFile);
         switch (input.type) {
           case "catalog": {
-            const all = Array.from(new Set(["default", ...scenarioNames(deps.getScript())]));
+            const script = deps.getScript();
+            const all = Array.from(new Set(["default", ...scenarioNames(script)]));
             emit({
               type: "catalog",
               requestId: input.requestId,
               catalog: {
                 models: all.map((id) => ({ id, label: id, isDefault: id === "default" })),
-                modes: [],
+                modes: script.modes ?? [],
+                ...(script.thinkingOptions ? { thinkingOptions: script.thinkingOptions } : {}),
                 defaultModel: "default",
+                ...(script.defaultMode ? { defaultMode: script.defaultMode } : {}),
+                ...(script.defaultThinkingOption ? { defaultThinkingOption: script.defaultThinkingOption } : {}),
               },
             });
             return;
@@ -64,33 +89,65 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
               emit,
               persisted: restored ?? undefined,
               initialScenario: input.config.model ?? undefined,
+              cwd: input.config.cwd,
+              initialMode: input.config.mode ?? null,
+              initialThinkingOption: input.config.thinkingOption ?? null,
+              initialProviderOptions: { ...(input.config.settings ?? {}), ...(input.config.providerOptions ?? {}) },
+              delayScale: () => deps.getConfig().delayScale,
             });
             sessions.set(input.sessionId, s);
+            const nonEmpty = (obj: Record<string, unknown> | undefined) => (obj && Object.keys(obj).length > 0 ? obj : undefined);
             recorder.record("open", {
               sessionId: restored?.logicalId ?? input.sessionId,
               providerSessionId: input.sessionId,
               restored: !!restored,
               history: input.history,
               model: input.config.model ?? null,
+              cwd: input.config.cwd,
+              mode: input.config.mode ?? null,
+              thinkingOption: input.config.thinkingOption ?? null,
+              title: input.config.title ?? null,
+              persist: input.config.persist,
+              ...(input.config.systemPrompt !== undefined ? { systemPrompt: input.config.systemPrompt } : {}),
+              ...(nonEmpty(input.config.env as Record<string, unknown> | undefined) ? { env: input.config.env } : {}),
+              ...(nonEmpty(input.config.mcpServers as Record<string, unknown> | undefined) ? { mcpServers: input.config.mcpServers } : {}),
+              ...(input.config.toolPolicy !== undefined ? { toolPolicy: input.config.toolPolicy } : {}),
+              ...(nonEmpty(input.config.providerOptions as Record<string, unknown> | undefined) ? { providerOptions: input.config.providerOptions } : {}),
+              ...(nonEmpty(input.config.settings as Record<string, unknown> | undefined) ? { settings: input.config.settings } : {}),
             });
             emit({
               type: "session.opened",
               requestId: input.requestId,
               sessionId: input.sessionId,
-              capabilities: ["prompt.message", "session.persistence", "permission"],
+              capabilities: negotiated,
               restoration: "core",
               cwd: input.config.cwd,
-              persistence: { version: 1, data: s.persistence() as unknown as never },
+              persistence: { version: 2, data: s.persistence() as unknown as never },
             });
             if (input.history === "replay") {
               for (const t of s.replay()) {
+                const item =
+                  (t.type === "user_message" || t.type === "assistant_message") && !("messageId" in t)
+                    ? { ...t, messageId: t.id }
+                    : t;
                 emit({
                   type: "timeline.item",
                   sessionId: input.sessionId,
-                  item: { id: t.id, type: t.type, text: t.text, messageId: t.id },
+                  item: item as never,
                 });
               }
             }
+            const script = deps.getScript();
+            if (
+              (script.modes && script.modes.length > 0) ||
+              (script.thinkingOptions && script.thinkingOptions.length > 0) ||
+              (script.controls && script.controls.length > 0) ||
+              input.config.mode ||
+              input.config.thinkingOption
+            ) {
+              s.emitConfig();
+            }
+            s.emitCommands();
             emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
             return;
           }
@@ -118,12 +175,39 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
             // An unknown or closed session has no card to answer.
             sessions.get(input.sessionId)?.respond(input.permissionId, input.response as never);
             return;
-          case "session.close":
-            sessions.get(input.sessionId)?.dispose();
+          case "session.configure": {
+            const s = sessions.get(input.sessionId);
+            recorder.record("configure", {
+              sessionId: s?.id ?? input.sessionId,
+              providerSessionId: input.sessionId,
+              changes: input.changes,
+            });
+            s?.configure(input.changes);
+            emit({ type: "request.completed", requestId: input.requestId });
+            return;
+          }
+          case "session.can_stop_runtime": {
+            const s = sessions.get(input.sessionId);
+            emit({
+              type: "session.can_stop_runtime",
+              requestId: input.requestId,
+              sessionId: input.sessionId,
+              canStop: !s?.activeTurn,
+            });
+            return;
+          }
+          case "session.close": {
+            const s = sessions.get(input.sessionId);
+            recorder.record("close", {
+              sessionId: s?.id ?? input.sessionId,
+              providerSessionId: input.sessionId,
+            });
+            s?.dispose();
             sessions.delete(input.sessionId);
             emit({ type: "request.completed", requestId: input.requestId });
             emit({ type: "session.closed", sessionId: input.sessionId });
             return;
+          }
           default:
             if ("requestId" in input && input.requestId) emit({ type: "request.completed", requestId: input.requestId });
         }
@@ -131,7 +215,7 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
 
       return {
         version: 1,
-        capabilities: ["prompt.message", "session.persistence", "permission"],
+        capabilities: negotiated,
         async send(input) {
           try {
             await deps.ready?.();

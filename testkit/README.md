@@ -144,20 +144,26 @@ await env.stop({ outDir: process.env.E2E_OUT });
 | `appVersion` | `string` | `@getpaseo/client` version | Override the `appVersion` sent by `DaemonClient`. |
 | `enableProviders` | `string[]` | `[]` | Built-in Paseo providers to leave enabled. |
 | `providerConfigs` | `Record<string, object>` | `{}` | Extra `agents.providers` entries merged into `config.json`. |
+| `daemonConfig` | `Record<string, unknown>` | `{}` | Extra `daemon` config overrides merged into `config.json` (e.g., `{ mcp: { enabled: true }, enableTerminalAgentHooks: true }`). `listen` is always preserved. |
+| `delayScale` | `number` | `undefined` | Injects `SCRIPTED_PROVIDER_DELAY_SCALE` (e.g., `0` to fast-forward multi-second scripted/recorded delays in CI). |
 | `timeScale` | `number` | `E2E_TIME_SCALE ?? 1` | Multiplier for CI timeouts. |
 | `keep` | `boolean` | `false` | Keep the temporary workspace directory after `stop()`. |
 | `realHome` | `boolean` | `false` | Preserve the host `HOME`/`XDG_*` variables for real provider CLIs. |
 
 ### `env` Methods
 
-- `env.createAgent({ scenario, prompt, title })` — Creates an agent on `scripted/<scenario>`.
+- `env.createAgent({ scenario, prompt, title, cwd, workspaceId, mode, modeId, thinkingOption, thinkingOptionId, options, providerOptions, mcpServers, toolPolicy, env, systemPrompt, config })` — Creates an agent on `scripted/<scenario>` with full session config forwarding.
+- `env.setScript(script)` — Hot-reloads `scenarios.json` on disk (takes effect on the next prompt without restarting the daemon).
 - `env.waitForFinish(agentId, timeoutMs?)` — Waits for the agent's active turn to finish.
 - `env.timeline(agentId)` — Fetches projected timeline entries.
 - `env.assistantTexts(agentId)` — Returns all `assistant_message` texts from the timeline.
 - `env.waitForPermission(agentId, { timeoutMs?, pollMs?, predicate? })` — Polls until a pending permission card appears and returns `{ ...card, requestId }`.
 - `env.respondToPermission(agentId, requestIdOrCard, response)` — Sends a permission response.
 - `env.waitForAssistantTexts(agentId, expected, { timeoutMs?, pollMs? })` — Polls `assistantTexts` until it equals `expected` (array) or satisfies `expected(texts)` (predicate).
-- `env.readRecord()` — Parses `received.jsonl` (`prompt`, `permission_requested`, `permission_response`, `permission_canceled`, `permission_unknown`, etc.).
+- `env.waitForRecord(predicate, { timeoutMs?, pollMs? })` — Polls `received.jsonl` until an entry satisfies `predicate`.
+- `env.waitForTimeline(agentId, predicate, { timeoutMs?, pollMs? })` — Polls projected timeline entries until one satisfies `predicate`.
+- `env.steer(agentId, prompt, options?)` — Sends a mid-turn `activeTurnBehavior: "steer"` message to an active agent.
+- `env.readRecord()` — Parses `received.jsonl` (`open`, `prompt`, `configure`, `close`, `exhausted`, `permission_requested`, `permission_response`, `permission_canceled`, `permission_unknown`, etc.).
 - `env.restart(label?)` — Restarts the daemon and reconnects the client.
 - `env.stop({ outDir?, extraCollect? })` — Closes client, stops daemon, optionally collects logs + `extraCollect`, and cleans up the sandbox.
 

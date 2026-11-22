@@ -25,6 +25,15 @@ export function parseScript(text: string): ParseResult {
 export function mergeScripts(base: Script, over: Script): Script {
   return {
     macros: { ...base.macros, ...over.macros },
+    ...(over.onExhausted ?? base.onExhausted ? { onExhausted: over.onExhausted ?? base.onExhausted } : {}),
+    ...(over.modes ?? base.modes ? { modes: over.modes ?? base.modes } : {}),
+    ...(over.defaultMode ?? base.defaultMode ? { defaultMode: over.defaultMode ?? base.defaultMode } : {}),
+    ...(over.thinkingOptions ?? base.thinkingOptions ? { thinkingOptions: over.thinkingOptions ?? base.thinkingOptions } : {}),
+    ...(over.defaultThinkingOption ?? base.defaultThinkingOption
+      ? { defaultThinkingOption: over.defaultThinkingOption ?? base.defaultThinkingOption }
+      : {}),
+    ...(over.controls ?? base.controls ? { controls: over.controls ?? base.controls } : {}),
+    ...(over.commands ?? base.commands ? { commands: over.commands ?? base.commands } : {}),
     scenarios: { ...base.scenarios, ...over.scenarios },
   };
 }
@@ -89,11 +98,13 @@ function expandTool(t: ToolSpec, m: Record<string, string>): ToolSpec {
   return t.permission ? { ...t, permission: expandPermission(t.permission, m) } : t;
 }
 
-/** `@MACRO` in a step's text, and in every branch text below it. */
+/** `@MACRO` in a step's text, chunks, message, and in every branch text below it. */
 function expandStep(s: Step, m: Record<string, string>): Step {
   return {
     ...s,
     ...(s.text !== undefined ? { text: expandMacro(s.text, m) } : {}),
+    ...(s.chunks ? { chunks: s.chunks.map((c) => expandMacro(c, m) ?? "") } : {}),
+    ...(s.message !== undefined ? { message: expandMacro(s.message, m) } : {}),
     ...(s.tool ? { tool: expandTool(s.tool, m) } : {}),
     ...(s.permission ? { permission: expandPermission(s.permission, m) } : {}),
     ...(s.steps ? { steps: s.steps.map((c) => expandStep(c, m)) } : {}),
@@ -102,10 +113,19 @@ function expandStep(s: Step, m: Record<string, string>): Step {
 
 const FALLBACK: Reply = { text: "plain default reply" };
 
-export function resolveReply(script: Script, scenario: string, step: number): { reply: Reply; step: number } {
+export function resolveReply(
+  script: Script,
+  scenario: string,
+  step: number,
+): { reply: Reply; step: number; exhausted?: boolean } {
   const own = (name: string) => (Object.hasOwn(script.scenarios, name) ? script.scenarios[name] : undefined);
   const list = own(scenario) ?? own("default") ?? [FALLBACK];
-  const raw = list.length === 0 ? FALLBACK : list[Math.min(step, list.length - 1)];
+  const policy = script.onExhausted ?? "repeat";
+  if (list.length > 0 && step >= list.length && policy === "fail") {
+    return { step, reply: FALLBACK, exhausted: true };
+  }
+  const index = list.length === 0 ? 0 : policy === "cycle" ? step % list.length : Math.min(step, list.length - 1);
+  const raw = list.length === 0 ? FALLBACK : list[index];
   const m = script.macros ?? {};
   return {
     step,
@@ -117,6 +137,7 @@ export function resolveReply(script: Script, scenario: string, step: number): { 
       messages: raw.messages?.map((c) => expandMacro(c, m) ?? ""),
       tools: raw.tools?.map((t) => expandTool(t, m)),
       steps: raw.steps?.map((s) => expandStep(s, m)),
+      ...(raw.onSteer ? { onSteer: expandBranch(raw.onSteer, m) } : {}),
     },
   };
 }

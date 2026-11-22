@@ -140,7 +140,7 @@ scenarios:
 
 A reply can be a list of `steps` instead of the aggregated `text` / `messages` / `tools` fields. Each step waits for its own `delayMs` before it appears, and the steps run in order - so a recorded conversation keeps the pacing of the original: thinking time, every tool call and every message keep their own duration, and the replay takes as long as the recorded turn did.
 
-`kind` is `reasoning`, `message` or `tool`; a `tool` step carries the usual tool fields under `tool`. `delayMs` is optional. Hand-written scripts usually use the simpler `text` / `chunks` / `messages` / `tools` fields and need no steps.
+`kind` supports `reasoning`, `message`, `tool`, `permission`, `parallel`, `todo`, `compaction` (with optional `runningMs` for `loading` → `completed`), `notification`, `error`, `plugin` (`timeline.plugin` custom items), `usage`, and `notice`. Both `message` and `reasoning` steps also accept `chunks` + `chunkDelayMs` for step-level streaming. `delayMs` and `revertToken` are optional. Hand-written scripts can still use the simpler `text` / `chunks` / `messages` / `tools` fields.
 
 The same in JSON:
 
@@ -173,13 +173,19 @@ The same in JSON:
 | `tools[]` | display-only tool calls: `name`, `detail` (Paseo tool-detail object: `shell`, `read`, `edit`, `write`, `search`, `fetch`, `plain_text`, …), `status` (`running`/`completed`/`failed`/`canceled`), `runningMs`, `error`. **Nothing is ever executed.** |
 | `startDelayMs` / `delayMs` | wait before the reply starts / before the turn ends (makes races reproducible) |
 | `outcome` | `completed` (default), `failed`, `canceled`, or `hang` (stay running until interrupted) |
-| `error` | message for a `failed`/`canceled` outcome |
+| `error` / `errorCode` / `diagnostic` / `runtimeFailed` | message, custom error code (e.g. `quota_exceeded`), diagnostic detail, and optional `session.runtime_failed` event |
+| `usage` / `notices` | emit `session.usage` (tokens, cost, context window) and `session.notice` banners |
+| `onSteer` | branch to run when a mid-turn `delivery: "steer"` message arrives (absorbs steer without canceling the active turn; supports `{{steer.text}}`) |
 | `expect` | the user message this step expects (set by recordings); see *alignment* |
 | `@NAME` | a whole-string `text`/`chunks`/`messages` value equal to `@NAME` expands the macro `NAME` (also inside permission branches) |
 
+Top-level script options: `onExhausted` (`"repeat"` default, `"fail"` → `E_SCRIPT_EXHAUSTED`, or `"cycle"`), `modes`, `defaultMode`, `thinkingOptions`, `defaultThinkingOption`, `controls`, and `commands` (exposed via `catalog`, `session.config`, `session.commands`, and live `session.configure` updates).
+
+Template hydration: emitted timeline items and permission cards automatically re-hydrate `{{cwd}}` to the active session's working directory and expand `{{prompt.text}}`, `{{session.cwd}}`, `{{session.model}}`, `{{session.mode}}`, `{{session.thinkingOption}}`, `{{steer.text}}`, and `{{permission.updatedInput.<key>}}` while leaving redaction placeholders (`{{secret_1}}`, etc.) untouched.
+
 Invalid scripts, unknown scenario names and malformed tool details never stall a turn: the provider falls back to the built-ins (the settings page shows the problem) and a turn that cannot continue ends as `failed`. Tool `detail` objects are validated against Paseo's own tool-detail shapes when the script loads.
 
-Behaviour worth knowing: an interrupt ends the active turn as `canceled`; a new message while a turn is running supersedes it (the old turn is canceled exactly once); unknown scenario names fall back to `default`; scripts restore their step after a daemon restart.
+Behaviour worth knowing: an interrupt ends the active turn as `canceled`; a new `delivery: "auto"` message while a turn is running supersedes it (the old turn is canceled exactly once), whereas `delivery: "steer"` is absorbed into the active turn (and honors `clearPendingPermissions`); unknown scenario names fall back to `default`; scripts persist full timeline snapshots (`version: 2`) across daemon restarts; set `delayScale: 0` (or `SCRIPTED_PROVIDER_DELAY_SCALE=0`) to fast-forward timed delays in CI.
 
 **Alignment** (setting): when a step has `expect` and the incoming message differs — `warn` (default) records a `mismatch` and continues, `strict` fails that prompt with code `E_SCRIPT_MISMATCH`, `ignore` doesn't check.
 
@@ -239,7 +245,7 @@ scenarios:
 | `title`, `description`, `input`, `detail`, `suggestions`, `metadata`, `actions` | passed to the card as-is (`input` / `metadata` / `suggestions` must be JSON) |
 | `plan` | the plan text (sent as `input.plan`, which is what the app renders) |
 | `questions` | AskUserQuestion questions (sent as `input.questions`; extra fields such as `preview` pass through) |
-| `on` | branches: `{ text?, steps?, outcome?, error? }` |
+| `on` | branches: `{ text?, steps?, outcome?, error?, errorCode?, diagnostic?, runtimeFailed?, usage?, notices?, setMode? }` |
 
 **Which branch runs** (first match wins): the button id (`selectedActionId` — the app's default buttons are `accept` and `reject`); then question answers, `answer:<header>=<value>` in question order and `answer:<value>` for the first question (multi-select answers are the labels joined with `", "`, in click order); then `allow` / `deny`; then `any`. With no match only the default (tool completes / fails) applies. A branch's `text` and `steps` run, then the rest of the reply — unless the branch has an `outcome`, which ends the turn there.
 
@@ -259,7 +265,7 @@ Every other `{{…}}` text, including the redaction placeholders `{{secret_1}}` 
 
 ## Received-messages log
 
-Set a log file in settings (or run with `SCRIPTED_PROVIDER_STATE=<dir>`, which uses `<dir>/scenarios.json` and `<dir>/received.jsonl`). One JSON line per event: `open`, `prompt` (text, `delivery`, `step`, `scenario`, `activeTurnAtArrival`, `clientMessageId`), `interrupt`, `mismatch`, and for permission cards `permission_requested` (`permissionId`, `cardKind`, `name`), `permission_response` (`behavior`, `selectedActionId`, `message`, `interrupt`, `answers`, `branch`), `permission_canceled` (`reason`: `interrupted`, `superseded`, `interrupt_deny`, `branch_outcome`, `failed`) and `permission_unknown` (an answer for a card that is not pending). Assert on it in tests; view the tail in the settings page.
+Set a log file in settings (or run with `SCRIPTED_PROVIDER_STATE=<dir>`, which uses `<dir>/scenarios.json` and `<dir>/received.jsonl`). One JSON line per event: `open` (full session `config`: `cwd`, `env`, `systemPrompt`, `mcpServers`, `toolPolicy`, `mode`, `thinkingOption`, `providerOptions`, `settings`, `title`), `prompt` (text, `delivery`, `step`, `scenario`, `activeTurnAtArrival`, `steeredTurnId`, `clientMessageId`, `attachments`, `command`, `outputSchema`, `clearPendingPermissions`), `configure`, `close`, `interrupt`, `mismatch`, `exhausted`, and for permission cards `permission_requested` (`permissionId`, `cardKind`, `name`), `permission_response` (`behavior`, `selectedActionId`, `message`, `interrupt`, `answers`, `updatedInput`, `updatedPermissions`, `branch`), `permission_canceled` (`reason`: `interrupted`, `superseded`, `interrupt_deny`, `branch_outcome`, `failed`) and `permission_unknown` (an answer for a card that is not pending). Assert on it in tests; view the tail in the settings page.
 
 ## Record a session as a script
 
@@ -316,7 +322,7 @@ It picks a free port, uses a temp `--home` plus fake `HOME`/`USERPROFILE`, disab
 
 | Paseo | Status |
 |---|---|
-| 0.11.x – 0.16.x (tested in CI against 0.16.2) | supported |
+| 0.12.x – 0.16.x (tested in CI against 0.16.2; dynamic capability negotiation) | supported |
 | newer versions | allowed by the version range, not guaranteed |
 | other | not tested |
 

@@ -102,6 +102,12 @@ export function permissionVars(spec: PermissionSpec, r: PermissionResponse): Rec
   // A declared question nobody answered is empty, like every other missing value.
   for (const q of declaredQuestions(spec) ?? []) vars[`answers.${q.header}`] = "";
   for (const [h, v] of Object.entries(answers ?? {})) vars[`answers.${h}`] = v;
+  if (r.behavior === "allow" && r.updatedInput && typeof r.updatedInput === "object") {
+    for (const [k, v] of Object.entries(r.updatedInput)) {
+      if (k === "answers") continue;
+      vars[`updatedInput.${k}`] = typeof v === "string" ? v : JSON.stringify(v);
+    }
+  }
   return vars;
 }
 

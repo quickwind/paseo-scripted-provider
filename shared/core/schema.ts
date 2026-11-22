@@ -72,8 +72,82 @@ export const QuestionSchema = loose({
 const jsonRecord = z.record(z.string(), z.json());
 const outcome = z.enum(["completed", "failed", "canceled", "hang"]);
 
+export const TodoItemSchema = z.object({
+  text: z.string(),
+  completed: z.boolean(),
+  id: z.string().optional(),
+  status: z.enum(["pending", "in_progress", "completed"]).optional(),
+  activeForm: z.string().optional(),
+});
+
+export const UsageSchema = z.object({
+  inputTokens: optNum,
+  cachedInputTokens: optNum,
+  outputTokens: optNum,
+  totalCostUsd: optNum,
+  contextWindowMaxTokens: optNum,
+  contextWindowUsedTokens: optNum,
+});
+
+export const NoticeSchema = z.object({
+  id: z.string().min(1).optional(),
+  severity: z.enum(["info", "warning", "error"]),
+  title: z.string(),
+  description: z.string().optional(),
+  dismissed: z.boolean().optional(),
+});
+
+export const ModeSpecSchema = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
+  isUnattended: z.boolean().optional(),
+});
+
+export const ThinkingOptionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+});
+
+export const ControlSpecSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("toggle"),
+    key: z.string().min(1),
+    label: z.string(),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+    defaultValue: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("select"),
+    key: z.string().min(1),
+    label: z.string(),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+    defaultValue: z.string().optional(),
+    choices: z.array(z.object({ value: z.string(), label: z.string(), description: z.string().optional() })),
+  }),
+]);
+
+export const CommandSpecSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  argumentHint: z.string().optional(),
+});
+
 export type PermissionAction = z.infer<typeof PermissionActionSchema>;
 export type Question = z.infer<typeof QuestionSchema>;
+export type TodoItem = z.infer<typeof TodoItemSchema>;
+export type UsageSpec = z.infer<typeof UsageSchema>;
+export type NoticeSpec = z.infer<typeof NoticeSchema>;
+export type ModeSpec = z.infer<typeof ModeSpecSchema>;
+export type ThinkingOptionSpec = z.infer<typeof ThinkingOptionSchema>;
+export type ControlSpec = z.infer<typeof ControlSpecSchema>;
+export type CommandSpec = z.infer<typeof CommandSpecSchema>;
 
 export interface ToolSpec {
   name: string;
@@ -82,6 +156,8 @@ export interface ToolSpec {
   runningMs?: number;
   error?: string;
   permission?: PermissionSpec;
+  metadata?: Record<string, z.core.util.JSONType>;
+  revertToken?: z.core.util.JSONType;
 }
 
 export interface PermissionSpec {
@@ -105,15 +181,49 @@ export interface Branch {
   steps?: Step[];
   outcome?: "completed" | "failed" | "canceled" | "hang";
   error?: string;
+  errorCode?: string;
+  diagnostic?: string;
+  runtimeFailed?: boolean;
+  usage?: UsageSpec;
+  notices?: NoticeSpec[];
+  setMode?: string;
 }
 
 export interface Step {
-  kind: "reasoning" | "message" | "tool" | "permission" | "parallel";
+  kind:
+    | "reasoning"
+    | "message"
+    | "tool"
+    | "permission"
+    | "parallel"
+    | "todo"
+    | "compaction"
+    | "notification"
+    | "error"
+    | "plugin"
+    | "usage"
+    | "notice";
   delayMs?: number;
   text?: string;
+  chunks?: string[];
+  chunkDelayMs?: number;
   tool?: ToolSpec;
   permission?: PermissionSpec;
   steps?: Step[];
+  revertToken?: z.core.util.JSONType;
+  items?: TodoItem[];
+  status?: "loading" | "completed";
+  trigger?: "auto" | "manual";
+  preTokens?: number;
+  runningMs?: number;
+  level?: "info" | "warning" | "error";
+  message?: string;
+  pluginId?: string;
+  pluginKind?: string;
+  version?: number;
+  data?: z.core.util.JSONType;
+  usage?: UsageSpec;
+  notice?: NoticeSpec;
 }
 
 export const BranchSchema: z.ZodType<Branch> = z.lazy(() =>
@@ -122,6 +232,12 @@ export const BranchSchema: z.ZodType<Branch> = z.lazy(() =>
     steps: z.array(StepSchema).optional(),
     outcome: outcome.optional(),
     error: z.string().optional(),
+    errorCode: z.string().optional(),
+    diagnostic: z.string().optional(),
+    runtimeFailed: z.boolean().optional(),
+    usage: UsageSchema.optional(),
+    notices: z.array(NoticeSchema).optional(),
+    setMode: z.string().min(1).optional(),
   }),
 );
 
@@ -151,6 +267,8 @@ export const ToolSpecSchema: z.ZodType<ToolSpec> = z.lazy(() =>
     runningMs: ms.optional(),
     error: z.string().optional(),
     permission: PermissionSpecSchema.optional(),
+    metadata: jsonRecord.optional(),
+    revertToken: z.json().optional(),
   }),
 );
 
@@ -172,21 +290,72 @@ function childId(s: Step): string | undefined {
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
   z
     .object({
-      kind: z.enum(["reasoning", "message", "tool", "permission", "parallel"]),
+      kind: z.enum([
+        "reasoning",
+        "message",
+        "tool",
+        "permission",
+        "parallel",
+        "todo",
+        "compaction",
+        "notification",
+        "error",
+        "plugin",
+        "usage",
+        "notice",
+      ]),
       /** Wait before this step is emitted: the gap to the previous event. */
       delayMs: z.number().int().min(0).optional(),
       /** The text of a reasoning or message step. */
       text: z.string().optional(),
+      /** Streamed text chunks for a message or reasoning step. */
+      chunks: z.array(z.string()).optional(),
+      /** Delay between streamed chunks inside this step. */
+      chunkDelayMs: ms.optional(),
       /** The tool a tool step calls. */
       tool: ToolSpecSchema.optional(),
       /** The card a permission step raises. */
       permission: PermissionSpecSchema.optional(),
       /** The children of a parallel step: tool and permission steps only. */
       steps: z.array(StepSchema).optional(),
+      /** Optional revert token attached to the emitted timeline item. */
+      revertToken: z.json().optional(),
+      /** Todo entries for a `todo` step. */
+      items: z.array(TodoItemSchema).optional(),
+      /** Status for a `compaction` step (defaults to completed, or loading -> completed with runningMs). */
+      status: z.enum(["loading", "completed"]).optional(),
+      trigger: z.enum(["auto", "manual"]).optional(),
+      preTokens: optNum,
+      runningMs: ms.optional(),
+      /** Severity level for a `notification` step. */
+      level: z.enum(["info", "warning", "error"]).optional(),
+      /** Message text for a `notification` or `error` step. */
+      message: z.string().optional(),
+      /** Fields for a `plugin` timeline item step. */
+      pluginId: z.string().min(1).optional(),
+      pluginKind: z.string().min(1).optional(),
+      version: z.number().int().min(1).optional(),
+      data: z.json().optional(),
+      /** Usage payload for a `usage` step. */
+      usage: UsageSchema.optional(),
+      /** Notice payload for a `notice` step. */
+      notice: NoticeSchema.optional(),
     })
     .superRefine(function (s, ctx) {
       if (s.kind === "permission" && !s.permission) {
         ctx.addIssue({ code: "custom", path: ["permission"], message: "a permission step needs `permission`" });
+      }
+      if (s.kind === "todo" && !s.items) {
+        ctx.addIssue({ code: "custom", path: ["items"], message: "a todo step needs `items`" });
+      }
+      if (s.kind === "plugin" && (!s.pluginId || !s.pluginKind)) {
+        ctx.addIssue({ code: "custom", path: ["pluginId"], message: "a plugin step needs `pluginId` and `pluginKind`" });
+      }
+      if (s.kind === "usage" && !s.usage) {
+        ctx.addIssue({ code: "custom", path: ["usage"], message: "a usage step needs `usage`" });
+      }
+      if (s.kind === "notice" && !s.notice) {
+        ctx.addIssue({ code: "custom", path: ["notice"], message: "a notice step needs `notice`" });
       }
       if (s.kind !== "parallel") return;
       if (!s.steps || s.steps.length === 0) {
@@ -218,12 +387,28 @@ export const ReplySchema = z.object({
   delayMs: ms.optional(),
   outcome: z.enum(["completed", "failed", "canceled", "hang"]).optional(),
   error: z.string().optional(),
+  errorCode: z.string().optional(),
+  diagnostic: z.string().optional(),
+  runtimeFailed: z.boolean().optional(),
+  usage: UsageSchema.optional(),
+  notices: z.array(NoticeSchema).optional(),
   expect: z.string().optional(),
   steps: z.array(StepSchema).optional(),
+  onSteer: BranchSchema.optional(),
 });
+
+export const ExhaustionPolicySchema = z.enum(["repeat", "fail", "cycle"]);
+export type ExhaustionPolicy = z.infer<typeof ExhaustionPolicySchema>;
 
 export const ScriptSchema = z.object({
   macros: z.record(z.string(), z.string()).optional(),
+  onExhausted: ExhaustionPolicySchema.optional(),
+  modes: z.array(ModeSpecSchema).optional(),
+  defaultMode: z.string().min(1).optional(),
+  thinkingOptions: z.array(ThinkingOptionSchema).optional(),
+  defaultThinkingOption: z.string().min(1).optional(),
+  controls: z.array(ControlSpecSchema).optional(),
+  commands: z.array(CommandSpecSchema).optional(),
   scenarios: z.record(z.string(), z.array(ReplySchema)),
 });
 

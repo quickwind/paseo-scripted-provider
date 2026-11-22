@@ -199,9 +199,13 @@ export class Workspace {
 }
 
 export class Daemon {
-  constructor(ws, { port, timeScale = 1, enableProviders = [], providerConfigs = {}, extraEnv = {}, cliEntry: customCliEntry } = {}) {
+  constructor(
+    ws,
+    { port, timeScale = 1, enableProviders = [], providerConfigs = {}, daemonConfig = {}, extraEnv = {}, cliEntry: customCliEntry } = {},
+  ) {
     // providerConfigs: custom provider definitions (e.g. ACP providers) merged into agents.providers.
     this.providerConfigs = providerConfigs;
+    this.daemonConfig = daemonConfig;
     this.ws = ws;
     this.port = port;
     this.host = `127.0.0.1:${port}`;
@@ -229,10 +233,11 @@ export class Daemon {
     config.version = 1;
     config.daemon = {
       ...config.daemon,
-      listen: this.host,
       mcp: { enabled: false },
       relay: { enabled: false },
       enableTerminalAgentHooks: false,
+      ...this.daemonConfig,
+      listen: this.host,
     };
     config.features = { ...config.features, dictation: { enabled: false }, voiceMode: { enabled: false } };
     config.agents = {
