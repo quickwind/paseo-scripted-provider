@@ -18,7 +18,7 @@
 
 ## Why Scripted Provider?
 
-Testing agentic UIs, permission-automation plugins, and CI pipelines against real LLMs is slow, flaky, and expensive. **Scripted Provider** gives you a first-class Paseo agent backend that behaves like a real agent — deterministically:
+Testing agentic UIs, Paseo plugins (timeline renderers, lifecycle hooks, permission automations, UI panels), and CI pipelines against real LLMs is slow, flaky, and expensive. **Scripted Provider** gives you a first-class Paseo agent backend that behaves like a real agent — deterministically:
 
 - **Test plugins & Paseo UI by hand** — reproduce long outputs, chunked streaming, reasoning steps, tool failures, cancellations, and multi-button permission/question cards on demand.
 - **Record & redact real bug reports** — capture any live Claude, Codex, or OpenCode session into a replayable YAML/JSON script, review auto-redacted secrets (`{{secret_N}}`, `{{cwd}}`, `{{email_N}}`), and replay it anywhere with no API key.
