@@ -8,6 +8,11 @@ Guidance for AI coding agents and contributors working in `paseo-scripted-provid
 
 It also ships a companion npm package, `paseo-scripted-provider-testkit`, located under [`testkit/`](testkit/).
 
+## Domain Language & Architecture Decisions
+
+- **[`GLOSSARY.md`](GLOSSARY.md)**: Canonical domain terminology for this repo. Use these terms consistently in code, specs, and docs.
+- **[`docs/adr/`](docs/adr/)**: Architecture Decision Records capturing hard-to-reverse trade-offs and boundaries. Read existing ADRs before proposing structural changes.
+
 ## Repository Layout
 
 - `server/`: Node.js-only daemon plugin lifecycle, provider registration, session orchestration, and event recording.
@@ -53,9 +58,9 @@ npm run vendor:yaml
 
 ## Architectural Guidelines
 
-1. **Display-Only Simulated Tools (Layer 1)**:
-   - Tool calls inside scripted replies (`tools[]`) are for UI display and status verification only.
-   - Never attempt to actually execute tools or shell commands from scripted steps.
+1. **Display Mode by Default & Dual-Lock Execute Mode** (see [`docs/adr/0004`](docs/adr/0004-dual-mode-harness-with-dual-lock-gate.md)):
+   - Tool calls inside scripted replies (`tools[]`) run in `Display Mode` by default (UI display and status verification only; zero side effects).
+   - Real execution (`Execute Mode`) requires a Dual-Lock: host authorization for the tool's `Execution Scope` (`fs` / `mcp` / `shell`) AND explicit script opt-in (`execute: true`). Recordings must never emit `execute: true`.
 
 2. **Deterministic Timing**:
    - `planner` creates flat execution steps; `session` executes them via an injected `Clock` interface.
