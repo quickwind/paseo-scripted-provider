@@ -138,7 +138,7 @@ scenarios:
 
 一条回复可以使用 `steps` 列表替代聚合字段（`text` / `messages` / `tools`）。每个 step 会先等待自身的 `delayMs` 再发出，因此录制的会话可以完整保留原始节奏——包括思考耗时、每个工具调用和每条消息的间隔时间。
 
-`kind` 可选 `reasoning`、`message` 或 `tool`；`delayMs` 为可选项。手写脚本通常直接使用更简洁的 `text` / `chunks` / `messages` / `tools` 字段即可。
+`kind` 支持 `reasoning`、`message`、`tool`、`permission`、`parallel`、`todo`、`compaction`（支持 `runningMs` 模拟 `loading` → `completed`）、`notification`、`error`、`plugin`（`timeline.plugin` 自定义卡片）、`usage` 与 `notice`；`message` 和 `reasoning` 步骤同样支持 `chunks` + `chunkDelayMs` 流式输出；`delayMs` 与 `revertToken` 均为可选项。手写脚本依然可以直接使用更简洁的 `text` / `chunks` / `messages` / `tools` 字段。
 
 | 回复字段 | 含义 |
 |---|---|
@@ -149,13 +149,19 @@ scenarios:
 | `tools[]` | 仅展示型工具调用：`name`、`detail`（Paseo 工具详情对象：`shell`、`read`、`edit`、`write`、`search`、`fetch`、`plain_text` 等）、`status`（`running`/`completed`/`failed`/`canceled`）、`runningMs`、`error`。**不会真正执行任何命令。** |
 | `startDelayMs` / `delayMs` | 回复开始前 / 回合结束前的等待时间（便于复现竞态条件） |
 | `outcome` | `completed`（默认）、`failed`、`canceled` 或 `hang`（保持运行直至被中断） |
-| `error` | `failed`/`canceled` 状态下的错误信息 |
+| `error` / `errorCode` / `diagnostic` / `runtimeFailed` | 错误信息、自定义错误码（如 `quota_exceeded`）、诊断详情以及是否发射 `session.runtime_failed` |
+| `usage` / `notices` | 发射 `session.usage`（Token、费用、上下文窗口）与 `session.notice` 横幅通知 |
+| `onSteer` | 回合运行中收到 `delivery: "steer"` 插话时执行的分支（不取消当前回合，支持 `{{steer.text}}`） |
 | `expect` | 该步骤期望的用户输入（录制脚本会自动生成）；见下方*对齐模式* |
 | `@NAME` | 当 `text`/`chunks`/`messages` 的整串值等于 `@NAME` 时展开宏 `NAME`（权限分支内同样适用） |
 
+顶层脚本配置项：支持 `onExhausted`（`"repeat"` 默认、`"fail"` 触发 `E_SCRIPT_EXHAUSTED`、或 `"cycle"` 循环）、`modes`、`defaultMode`、`thinkingOptions`、`defaultThinkingOption`、`controls` 以及 `commands`（通过 `catalog`、`session.config`、`session.commands` 与 `session.configure` 实时联动，且支持权限分支内 `setMode` 自动切换模式）。
+
+模板变量反水合：发射时间线与权限卡时会自动将 `{{cwd}}` 反水合为当前会话工作目录，并支持 `{{prompt.text}}`、`{{session.cwd}}`、`{{session.model}}`、`{{session.mode}}`、`{{session.thinkingOption}}`、`{{steer.text}}` 与 `{{permission.updatedInput.<key>}}`（脱敏占位符如 `{{secret_1}}` 原样保留）。
+
 非法脚本、未知场景名或格式错误的工具详情都不会卡死回合：Provider 会回退到内置场景（并在设置页显示具体错误）。所有工具 `detail` 对象在加载脚本时均会按 Paseo SDK 的结构进行校验。
 
-运行行为说明：中断操作会使当前回合以 `canceled` 结束；回合运行期间收到新消息会取代旧回合（旧回合仅取消一次）；未知场景名会回退到 `default`；守护进程重启后脚本会自动恢复当前步数。
+运行行为说明：中断操作会使当前回合以 `canceled` 结束；回合运行期间收到 `delivery: "auto"` 新消息会取代旧回合（旧回合仅取消一次），收到 `delivery: "steer"` 则吸收进当前回合（并支持 `clearPendingPermissions`）；未知场景名会回退到 `default`；守护进程重启后会以 `version: 2` 快照完整恢复所有时间线项；配置 `delayScale: 0`（或环境变量 `SCRIPTED_PROVIDER_DELAY_SCALE=0`）可在 CI 中以毫秒级跑完带真实延迟的录制脚本。
 
 **对齐模式（Alignment）**：当步骤配置了 `expect` 且实际输入不同步时 —— `warn`（默认）记录一条 `mismatch` 日志并继续；`strict` 以错误码 `E_SCRIPT_MISMATCH` 失败该次请求；`ignore` 不作检查。
 
@@ -171,7 +177,7 @@ scenarios:
 
 ## 接收消息日志
 
-在设置中指定日志文件（或通过环境变量 `SCRIPTED_PROVIDER_STATE=<dir>` 运行，自动使用 `<dir>/scenarios.json` 与 `<dir>/received.jsonl`）。每行一条 JSON 记录，涵盖 `open`、`prompt`、`interrupt`、`mismatch`，以及权限卡相关事件 `permission_requested`、`permission_response`、`permission_canceled`、`permission_unknown`。可在测试中直接断言，或在设置页查看最新日志。
+在设置中指定日志文件（或通过环境变量 `SCRIPTED_PROVIDER_STATE=<dir>` 运行，自动使用 `<dir>/scenarios.json` 与 `<dir>/received.jsonl`）。每行一条 JSON 记录，涵盖 `open`（完整记录 `cwd`、`env`、`systemPrompt`、`mcpServers`、`toolPolicy`、`mode`、`thinkingOption`、`providerOptions`、`settings`、`title`）、`prompt`（含附件摘要 `attachments`、`command`、`outputSchema`、`clearPendingPermissions`、`steeredTurnId`）、`configure`、`close`、`interrupt`、`mismatch`、`exhausted`，以及权限卡相关事件 `permission_requested`、`permission_response`（含 `updatedInput` 与 `updatedPermissions`）、`permission_canceled`、`permission_unknown`。可在测试中直接断言，或在设置页查看最新日志。
 
 ## 录制会话为脚本
 
@@ -209,7 +215,7 @@ await env.stop();
 
 | Paseo 版本 | 状态 |
 |---|---|
-| 0.11.x – 0.16.x（CI 实测 0.16.2） | 支持 |
+| 0.12.x – 0.16.x（CI 实测 0.16.2，支持动态能力协商） | 支持 |
 | 更高版本 | 版本范围允许，不作保证 |
 | 其他版本 | 未测试 |
 

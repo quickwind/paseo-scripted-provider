@@ -9,7 +9,7 @@ import { addScenarioToSettings, serializeScript } from "./shared/core/capture/ex
 import type { Script } from "./shared/core/schema";
 import { captureRpc, exportScriptRpc, getStatusRpc, mergeScenarioRpc, readRecordRpc, scriptedSettings } from "./shared/rpc";
 
-type SettingsValues = { scripts?: string; scriptFile?: string; recordFile?: string; alignment?: string };
+type SettingsValues = { scripts?: string; scriptFile?: string; recordFile?: string; alignment?: string; delayScale?: number };
 
 export default function contribute(server: PluginServerContext) {
   let values: SettingsValues | undefined;

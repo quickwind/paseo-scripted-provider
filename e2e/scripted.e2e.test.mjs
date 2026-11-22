@@ -4,6 +4,11 @@ import { after, before, describe, it } from "node:test";
 import { startScriptedEnv } from "../testkit/index.mjs";
 
 const SCRIPT = {
+  modes: [
+    { id: "auto", label: "Auto", isUnattended: true },
+    { id: "plan", label: "Plan" },
+  ],
+  defaultMode: "auto",
   scenarios: {
     greet: [{ text: "hello from script" }, { text: "second reply" }],
     boom: [{ outcome: "failed", error: "scripted failure" }],
@@ -175,5 +180,124 @@ describe("scripted provider on a real daemon", () => {
     await env.waitForAssistantTexts(no.id, ["denied: Denied by user", "after"]);
     const answers = env.readRecord().filter((r) => r.kind === "permission_response");
     assert.deepEqual(answers.map((r) => r.branch).sort(), ["accept", "reject"]);
+  });
+
+  it("P0-1/P0-2: emits rich timeline items (todo, compaction, notification, plugin, step chunks) and records full open config", async () => {
+    env.setScript({
+      ...SCRIPT,
+      scenarios: {
+        ...SCRIPT.scenarios,
+        rich: [
+          {
+            notices: [{ id: "n-e2e", severity: "info", title: "Quota check" }],
+            steps: [
+              { kind: "todo", items: [{ id: "t1", text: "Verify E2E", completed: false, status: "in_progress" }] },
+              { kind: "compaction", trigger: "auto", preTokens: 42000 },
+              { kind: "notification", level: "info", message: "Compacted" },
+              { kind: "plugin", pluginId: "paseo-scripted-provider", pluginKind: "demo_card", version: 1, data: { ok: true } },
+              { kind: "message", chunks: ["Hello ", "{{prompt.text}} at {{cwd}}"], chunkDelayMs: 10 },
+            ],
+            usage: { inputTokens: 120, outputTokens: 30, totalCostUsd: 0.001 },
+          },
+        ],
+      },
+    });
+
+    const agent = await env.createAgent({
+      scenario: "rich",
+      prompt: "world",
+      systemPrompt: "Custom E2E prompt",
+      env: { E2E_INJECTED: "yes" },
+    });
+    await env.waitForFinish(agent.id);
+
+    const todoEntry = await env.waitForTimeline(agent.id, (e) => e.item?.type === "todo");
+    assert.equal(todoEntry.item.items[0].text, "Verify E2E");
+    const tl = await env.timeline(agent.id);
+    assert.ok(tl.some((e) => e.item?.type === "compaction" && e.item.status === "completed"));
+    assert.ok(tl.some((e) => e.item?.type === "notification" && e.item.message === "Compacted"));
+    assert.ok(tl.some((e) => e.item?.type === "plugin" && e.item.kind === "demo_card"));
+    assert.deepEqual(await env.assistantTexts(agent.id), [`Hello world at ${env.ws.work}`]);
+
+    const openRec = await env.waitForRecord((r) => r.kind === "open" && r.model === "rich");
+    assert.equal(openRec.cwd, env.ws.work);
+    assert.equal(openRec.systemPrompt, "Custom E2E prompt");
+    assert.equal(openRec.env?.E2E_INJECTED, "yes");
+  });
+
+  it("P0-4: switches mode on plan approval and absorbs mid-turn steer without canceling", async () => {
+    env.setScript({
+      ...SCRIPT,
+      modes: [
+        { id: "plan", label: "Plan" },
+        { id: "auto", label: "Auto", isUnattended: true },
+      ],
+      defaultMode: "plan",
+      scenarios: {
+        ...SCRIPT.scenarios,
+        planAndSteer: [
+          {
+            steps: [
+              {
+                kind: "permission",
+                permission: {
+                  id: "plan-e2e",
+                  plan: "1. Build\n2. Test",
+                  on: { allow: { setMode: "auto", text: "Now in {{session.mode}}" } },
+                },
+              },
+            ],
+          },
+          {
+            steps: [
+              {
+                kind: "permission",
+                permission: { id: "wait-for-steer", title: "Waiting..." },
+              },
+            ],
+            onSteer: { text: "Steered: {{steer.text}}", outcome: "completed" },
+          },
+        ],
+      },
+    });
+
+    const agent = await env.createAgent({ scenario: "planAndSteer", prompt: "plan it", mode: "plan" });
+    const planCard = await env.waitForPermission(agent.id);
+    await env.respondToPermission(agent.id, planCard, { behavior: "allow", selectedActionId: "accept" });
+    await env.waitForAssistantTexts(agent.id, ["Now in auto"]);
+
+    // Turn 2: raise permission card, then steer mid-turn
+    const ref = env.api.agents.ref(agent.id);
+    await ref.send("start turn 2");
+    await env.waitForPermission(agent.id);
+    await env.steer(agent.id, "finish immediately");
+    await env.waitForAssistantTexts(agent.id, ["Now in auto", "Steered: finish immediately"]);
+
+    const steerRec = await env.waitForRecord((r) => r.kind === "prompt" && r.delivery === "steer");
+    assert.equal(steerRec.text, "finish immediately");
+  });
+
+  it("P0-5: accelerates timed replies when delayScale is set to 0", async () => {
+    const cur = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "settings.scripted-provider.read", {});
+    const saved = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "settings.scripted-provider.write", {
+      revision: cur.revision,
+      values: { ...cur.values, delayScale: 0 },
+    });
+    assert.equal(saved.status, "saved");
+    try {
+      const started = Date.now();
+      const agent = await env.createAgent({ scenario: "timed", prompt: "go" });
+      await env.waitForFinish(agent.id);
+      const elapsed = Date.now() - started;
+      // Original timed script waits 700 + 200 + 400 = 1300ms; with delayScale: 0 it finishes far faster.
+      assert.ok(elapsed < 1000, `expected delayScale=0 replay under 1000ms, took ${elapsed}ms`);
+      assert.deepEqual(await env.assistantTexts(agent.id), ["timed reply"]);
+    } finally {
+      const latest = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "settings.scripted-provider.read", {});
+      await env.conn.client.invokePluginRpc("paseo-scripted-provider", "settings.scripted-provider.write", {
+        revision: latest.revision,
+        values: { ...latest.values, delayScale: 1 },
+      });
+    }
   });
 });

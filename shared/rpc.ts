@@ -13,6 +13,7 @@ export const scriptedSettings = defineSettings({
     scriptFile: z.string().default(""),
     recordFile: z.string().default(""),
     alignment: z.enum(["warn", "strict", "ignore"]).default("warn"),
+    delayScale: z.number().min(0).optional(),
   }),
 });
 

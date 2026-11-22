@@ -4,4 +4,5 @@ export interface ResolvedConfig {
   recordFile?: string;
   probeFile?: string;
   alignment: "warn" | "strict" | "ignore";
+  delayScale?: number;
 }
