@@ -1,3 +1,5 @@
+**Language:** English | [简体中文](OVERVIEW.zh-CN.md)
+
 # Scripted Provider
 
 **Scripted Provider** adds a deterministic, model-free agent backend (`Scripted`) to [Paseo](https://paseo.sh). Write replies, streaming chunks, display-only tool calls, and interactive permission/question cards in YAML or JSON — or click **Record as script** on any real conversation to export a replayable script with automatic secret redaction (`{{secret_N}}`, `{{cwd}}`, `{{email_N}}`).
