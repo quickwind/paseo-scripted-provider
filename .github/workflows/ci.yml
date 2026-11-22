@@ -24,7 +24,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            testkit/package-lock.json
       - run: npm ci
+      - run: npm ci --prefix testkit
       - run: npm run typecheck
       - name: "Check what would be published"
         run: npm run verify:package

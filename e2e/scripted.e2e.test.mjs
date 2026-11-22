@@ -38,32 +38,6 @@ const SCRIPT = {
 
 let env;
 
-/** Polls the timeline until the assistant texts equal `expected` (or the deadline passes). */
-async function waitForTexts(agentId, expected) {
-  const deadline = Date.now() + env.ms(15000);
-  let got = [];
-  while (Date.now() < deadline) {
-    got = await assistantTexts(agentId);
-    if (JSON.stringify(got) === JSON.stringify(expected)) return;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.deepEqual(got, expected);
-}
-
-/** Polls until the agent has a pending permission card, and returns its id. */
-async function pendingCard(agentId) {
-  const ref = env.api.agents.ref(agentId);
-  const deadline = Date.now() + env.ms(10000);
-  while (Date.now() < deadline) {
-    await ref.refresh().catch(() => null);
-    const p = (ref.pendingPermissions ?? [])[0];
-    if (p) return p.request?.id ?? p.id;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`no permission card on ${agentId}`);
-}
-const assistantTexts = async (id) => (await env.timeline(id)).filter((e) => e.item?.type === "assistant_message").map((e) => e.item.text);
-
 before(async () => {
   env = await startScriptedEnv({ script: SCRIPT });
 });
@@ -81,7 +55,7 @@ describe("scripted provider on a real daemon", () => {
     const agent = await env.createAgent({ scenario: "greet", prompt: "first" });
     await env.waitForFinish(agent.id);
     await env.api.agents.ref(agent.id).run("second");
-    assert.deepEqual(await assistantTexts(agent.id), ["hello from script", "second reply"]);
+    assert.deepEqual(await env.assistantTexts(agent.id), ["hello from script", "second reply"]);
     const prompts = env.readRecord().filter((r) => r.kind === "prompt");
     assert.deepEqual(prompts.map((p) => [p.text, p.step]), [["first", 0], ["second", 1]]);
   });
@@ -95,7 +69,7 @@ describe("scripted provider on a real daemon", () => {
   it("streams chunks into one merged assistant message", async () => {
     const agent = await env.createAgent({ scenario: "stream", prompt: "go" });
     await env.waitForFinish(agent.id);
-    assert.deepEqual(await assistantTexts(agent.id), ["abc"]);
+    assert.deepEqual(await env.assistantTexts(agent.id), ["abc"]);
   });
 
   it("shows a tool call", async () => {
@@ -109,7 +83,7 @@ describe("scripted provider on a real daemon", () => {
     const agent = await env.createAgent({ scenario: "greet", prompt: "first" });
     await env.waitForFinish(agent.id);
     await env.api.agents.ref(agent.id).run("SCENARIO:stream now");
-    assert.equal((await assistantTexts(agent.id)).pop(), "abc");
+    assert.equal((await env.assistantTexts(agent.id)).pop(), "abc");
   });
 
   it("continues at the right step after a daemon restart", async () => {
@@ -117,7 +91,7 @@ describe("scripted provider on a real daemon", () => {
     await env.waitForFinish(agent.id);
     await env.restart();
     await env.api.agents.ref(agent.id).run("again");
-    assert.equal((await assistantTexts(agent.id)).pop(), "second reply");
+    assert.equal((await env.assistantTexts(agent.id)).pop(), "second reply");
   });
 
   it("answers a recorded script by message content, not only by order", async () => {
@@ -126,7 +100,7 @@ describe("scripted provider on a real daemon", () => {
     await ref.run("beta");
     await ref.run("gamma");
     await ref.run("alpha");
-    assert.deepEqual(await assistantTexts(agent.id), ["B", "C", "A"]);
+    assert.deepEqual(await env.assistantTexts(agent.id), ["B", "C", "A"]);
   });
 
   it("compiles and runs a YAML script (vendored yaml inside the daemon-compiled plugin)", async () => {    const yaml = [
@@ -156,7 +130,7 @@ describe("scripted provider on a real daemon", () => {
     const ref = env.api.agents.ref(agent.id);
     await ref.run("one");
     await ref.run("two");
-    assert.deepEqual(await assistantTexts(agent.id), ["first line\nsecond line\n", "a multi-line\nreply\n"]);
+    assert.deepEqual(await env.assistantTexts(agent.id), ["first line\nsecond line\n", "a multi-line\nreply\n"]);
   });
 
   it("replays a recorded reply with its original delays", async () => {
@@ -166,7 +140,7 @@ describe("scripted provider on a real daemon", () => {
     const elapsed = Date.now() - started;
     // The steps wait 700 + 200 + 400 ms; the agent start adds a little.
     assert.ok(elapsed >= 1250, `replay took ${elapsed}ms, expected at least 1250ms`);
-    assert.deepEqual(await assistantTexts(agent.id), ["timed reply"]);
+    assert.deepEqual(await env.assistantTexts(agent.id), ["timed reply"]);
   });
 
   it("serializes and merges scripts on the daemon (the client bundle ships no YAML parser)", async () => {    const exported = await env.conn.client.invokePluginRpc("paseo-scripted-provider", "scripted.export", {
@@ -191,14 +165,14 @@ describe("scripted provider on a real daemon", () => {
   it("raises a permission card and branches on the answer", async () => {
     const yes = await env.createAgent({ scenario: "perm", prompt: "go" });
     const no = await env.createAgent({ scenario: "perm", prompt: "go" });
-    await env.api.agents.ref(yes.id).respondToPermission({ requestId: await pendingCard(yes.id), response: { behavior: "allow", selectedActionId: "accept" } });
-    await env.api.agents
-      .ref(no.id)
-      .respondToPermission({ requestId: await pendingCard(no.id), response: { behavior: "deny", selectedActionId: "reject", message: "Denied by user" } });
+    const yesCard = await env.waitForPermission(yes.id);
+    const noCard = await env.waitForPermission(no.id);
+    await env.respondToPermission(yes.id, yesCard, { behavior: "allow", selectedActionId: "accept" });
+    await env.respondToPermission(no.id, noCard.requestId, { behavior: "deny", selectedActionId: "reject", message: "Denied by user" });
     // Poll for the replies rather than trusting one read after waitForFinish: that wait can return
     // before the answered turn has written its messages (seen on the Windows runner).
-    await waitForTexts(yes.id, ["allowed", "after"]);
-    await waitForTexts(no.id, ["denied: Denied by user", "after"]);
+    await env.waitForAssistantTexts(yes.id, ["allowed", "after"]);
+    await env.waitForAssistantTexts(no.id, ["denied: Denied by user", "after"]);
     const answers = env.readRecord().filter((r) => r.kind === "permission_response");
     assert.deepEqual(answers.map((r) => r.branch).sort(), ["accept", "reject"]);
   });
