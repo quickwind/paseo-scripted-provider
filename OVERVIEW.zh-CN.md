@@ -15,4 +15,9 @@
 
 1. 新建 Agent 时选择 **Scripted** Provider，并将目标场景作为模型。
 2. 发送消息即可逐步推进，或发送 `SCENARIO:<名称>` 在对话中切换场景。
-3. 打开 **设置 → Scripted provider** 编辑内联脚本、配置 `received.jsonl` 日志路径及对齐模式（`warn` / `strict` / `ignore`）。
+3. 打开 **设置 → Scripted provider** 编辑内联脚本、配置可选的 `received.jsonl` 日志路径及对齐模式（`warn` / `strict` / `ignore`）。
+
+## 可选事件日志与脱敏导出的区别
+
+- **可选事件日志（`received.jsonl`）**：默认关闭，仅在设置中指定路径或设置 `SCRIPTED_PROVIDER_STATE` 时启用。启用后会以 JSONL 格式追加记录入站会话生命周期事件（`open`、`configure`、`close`、`prompt` 文本与附件元数据、`mismatch`、`exhausted`），用于测试断言与调试。日志会省略可能包含凭证的 `env` 与 `mcpServers` 配置（仅记录变量名与服务名），但不会像脚本导出那样对提示词文本运行交互式 `Redactor` 脱敏。
+- **脱敏脚本导出（录制为脚本）**：捕获真实对话时间线并通过 `Redactor` 自动识别和替换密钥、高熵 Token、工作目录（`{{cwd}}`）与邮箱（`{{email_N}}`）为确定性占位符，用于导出可安全分享与回放的 YAML/JSON 脚本。

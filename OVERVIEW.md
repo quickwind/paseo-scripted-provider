@@ -15,4 +15,9 @@
 
 1. Create an agent with provider **Scripted** and choose a scenario as the model.
 2. Send messages to advance step by step, or send `SCENARIO:<name>` to switch mid-chat.
-3. Open **Settings → Scripted provider** to edit scripts, set a `received.jsonl` log file, and configure prompt alignment (`warn` / `strict` / `ignore`).
+3. Open **Settings → Scripted provider** to edit scripts, set an optional `received.jsonl` log file, and configure prompt alignment (`warn` / `strict` / `ignore`).
+
+## Optional Event Log vs. Redacted Export
+
+- **Optional Event Log (`received.jsonl`)**: Disabled by default unless configured in settings or `SCRIPTED_PROVIDER_STATE`. When enabled, it appends raw JSONL records of inbound session lifecycle events (`open`, `configure`, `close`, `prompt` text and attachment metadata, `mismatch`, `exhausted`) for test assertions and debugging. Credential-bearing session fields (`env` and `mcpServers`) are omitted (only key/server names are recorded), and unlike the script exporter, this log does **not** run the interactive `Redactor` over prompt text.
+- **Redacted Script Export (`Record as script`)**: Captures a conversation timeline and runs the `Redactor` to detect and replace secrets, high-entropy tokens, working directories (`{{cwd}}`), and emails (`{{email_N}}`) with deterministic placeholders before exporting shareable YAML/JSON scripts.
