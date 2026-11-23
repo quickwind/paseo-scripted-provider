@@ -222,7 +222,8 @@ describe("scripted provider on a real daemon", () => {
     const openRec = await env.waitForRecord((r) => r.kind === "open" && r.model === "rich");
     assert.equal(openRec.cwd, env.ws.work);
     assert.equal(openRec.systemPrompt, "Custom E2E prompt");
-    assert.equal(openRec.env?.E2E_INJECTED, "yes");
+    assert.equal(openRec.env, undefined);
+    assert.ok(Array.isArray(openRec.envKeys) && openRec.envKeys.includes("E2E_INJECTED"));
   });
 
   it("P0-4: switches mode on plan approval and absorbs mid-turn steer without canceling", async () => {
