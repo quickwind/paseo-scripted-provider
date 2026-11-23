@@ -66,7 +66,7 @@ describe("summarizeAttachments", () => {
 });
 
 describe("provider inbound observability (received.jsonl)", () => {
-  it("negotiates capabilities and records full open config, prompt metadata, updatedInput, configure, and close", async () => {
+  it("negotiates capabilities and records open config (omitting credential-bearing fields), prompt metadata, updatedInput, configure, and close", async () => {
     const records: { kind: string; data: Record<string, unknown> }[] = [];
     const clock = new ManualClock();
     let seq = 0;
@@ -106,9 +106,9 @@ describe("provider inbound observability (received.jsonl)", () => {
       history: "skip",
       config: {
         cwd: "/work/repo",
-        env: { CUSTOM_FLAG: "1" },
+        env: { CUSTOM_FLAG: "1", SECRET_API_KEY: "sk-live-secret" },
         systemPrompt: "Be concise",
-        mcpServers: { docs: { type: "stdio", command: "node", args: ["mcp.js"] } },
+        mcpServers: { docs: { type: "http", url: "https://mcp.example.com", headers: { Authorization: "Bearer top-secret" } } },
         toolPolicy: { preapproved: [{ kind: "mcp", server: "docs", tool: "search" }] },
         model: "obs",
         mode: "plan",
@@ -127,9 +127,9 @@ describe("provider inbound observability (received.jsonl)", () => {
     expect(openRec?.data).toMatchObject({
       sessionId: "s1",
       cwd: "/work/repo",
-      env: { CUSTOM_FLAG: "1" },
+      envKeys: ["CUSTOM_FLAG", "SECRET_API_KEY"],
       systemPrompt: "Be concise",
-      mcpServers: { docs: { type: "stdio", command: "node", args: ["mcp.js"] } },
+      mcpServerNames: ["docs"],
       toolPolicy: { preapproved: [{ kind: "mcp", server: "docs", tool: "search" }] },
       model: "obs",
       mode: "plan",
@@ -139,6 +139,10 @@ describe("provider inbound observability (received.jsonl)", () => {
       title: "Obs Test",
       persist: true,
     });
+    expect(openRec?.data).not.toHaveProperty("env");
+    expect(openRec?.data).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(openRec)).not.toContain("sk-live-secret");
+    expect(JSON.stringify(openRec)).not.toContain("Bearer top-secret");
 
     await conn.send({
       type: "session.prompt",

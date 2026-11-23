@@ -97,6 +97,8 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
             });
             sessions.set(input.sessionId, s);
             const nonEmpty = (obj: Record<string, unknown> | undefined) => (obj && Object.keys(obj).length > 0 ? obj : undefined);
+            const envKeys = input.config.env ? Object.keys(input.config.env) : [];
+            const mcpServerNames = input.config.mcpServers ? Object.keys(input.config.mcpServers) : [];
             recorder.record("open", {
               sessionId: restored?.logicalId ?? input.sessionId,
               providerSessionId: input.sessionId,
@@ -109,8 +111,9 @@ export function createScriptedProvider(deps: ProviderDeps): ProviderRegistration
               title: input.config.title ?? null,
               persist: input.config.persist,
               ...(input.config.systemPrompt !== undefined ? { systemPrompt: input.config.systemPrompt } : {}),
-              ...(nonEmpty(input.config.env as Record<string, unknown> | undefined) ? { env: input.config.env } : {}),
-              ...(nonEmpty(input.config.mcpServers as Record<string, unknown> | undefined) ? { mcpServers: input.config.mcpServers } : {}),
+              // Omit raw env and mcpServers values so credentials (API keys, auth headers) are never written to received.jsonl.
+              ...(envKeys.length > 0 ? { envKeys } : {}),
+              ...(mcpServerNames.length > 0 ? { mcpServerNames } : {}),
               ...(input.config.toolPolicy !== undefined ? { toolPolicy: input.config.toolPolicy } : {}),
               ...(nonEmpty(input.config.providerOptions as Record<string, unknown> | undefined) ? { providerOptions: input.config.providerOptions } : {}),
               ...(nonEmpty(input.config.settings as Record<string, unknown> | undefined) ? { settings: input.config.settings } : {}),
