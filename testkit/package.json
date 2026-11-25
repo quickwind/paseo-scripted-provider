@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "tree-kill": "1.2.2",
-    "ws": "8.22.0"
+    "ws": "8.23.0"
   },
   "peerDependencies": {
     "@getpaseo/cli": ">=0.12.0",
@@ -32,8 +32,8 @@
     "@getpaseo/server": ">=0.12.0"
   },
   "devDependencies": {
-    "@getpaseo/cli": "0.16.2",
-    "@getpaseo/client": "0.16.2",
-    "@getpaseo/server": "0.16.2"
+    "@getpaseo/cli": "0.17.3",
+    "@getpaseo/client": "0.17.3",
+    "@getpaseo/server": "0.17.3"
   }
 }
